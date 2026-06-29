@@ -350,19 +350,25 @@ def _register_real(run: PipelineRun) -> str:
             if adapter:
                 mlflow.log_artifacts(adapter, artifact_path="adapter")
             run_id = active.info.run_id
+            artifact_uri = active.info.artifact_uri
 
-        # 메트릭·아티팩트 로깅은 위에서 커밋됨. 모델 레지스트리 등록은 best-effort
-        # (MLflow 2.x/3.x 모델등록 API 차이가 있어 실패해도 기록은 유지).
+        # 모델 레지스트리 등록 — 저수준 create_model_version(source=아티팩트)로
+        # MLflow 2.x/3.x 모두 호환(3.x의 logged-model 요구를 우회). + production alias 승격.
         name = run.artifacts.get("served_name", "hcx-seed-tuned")
         detail = "MLflow 기록(params·metrics·adapter)"
         if adapter:
             try:
-                mv = mlflow.register_model(f"runs:/{run_id}/adapter", name)
-                run.artifacts["model_version"] = f"{name} v{mv.version}"
-                detail = f"등록·기록: {name} v{mv.version}"
+                client = mlflow.tracking.MlflowClient()
                 try:
-                    mlflow.tracking.MlflowClient().set_registered_model_alias(
-                        name, "production", mv.version)
+                    client.create_registered_model(name)
+                except Exception:  # noqa: BLE001  이미 존재
+                    pass
+                mv = client.create_model_version(
+                    name=name, source=f"{artifact_uri}/adapter", run_id=run_id)
+                run.artifacts["model_version"] = f"{name} v{mv.version}"
+                detail = f"등록: {name} v{mv.version}"
+                try:
+                    client.set_registered_model_alias(name, "production", mv.version)
                     detail = f"등록·승격: {name} v{mv.version} @production"
                 except Exception:  # noqa: BLE001
                     pass
