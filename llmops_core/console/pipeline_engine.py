@@ -351,18 +351,23 @@ def _register_real(run: PipelineRun) -> str:
                 mlflow.log_artifacts(adapter, artifact_path="adapter")
             run_id = active.info.run_id
 
-        # 레지스트리 등록 + production alias 승격(평가 게이트 통과·승인 완료 전제)
+        # 메트릭·아티팩트 로깅은 위에서 커밋됨. 모델 레지스트리 등록은 best-effort
+        # (MLflow 2.x/3.x 모델등록 API 차이가 있어 실패해도 기록은 유지).
         name = run.artifacts.get("served_name", "hcx-seed-tuned")
-        detail = "MLflow run 기록(params·metrics·adapter)"
+        detail = "MLflow 기록(params·metrics·adapter)"
         if adapter:
-            mv = mlflow.register_model(f"runs:/{run_id}/adapter", name)
-            run.artifacts["model_version"] = f"{name} v{mv.version}"
             try:
-                client = mlflow.tracking.MlflowClient()
-                client.set_registered_model_alias(name, "production", mv.version)
-                detail = f"등록·승격: {name} v{mv.version} @production"
-            except Exception:  # noqa: BLE001
-                detail = f"등록: {name} v{mv.version}"
+                mv = mlflow.register_model(f"runs:/{run_id}/adapter", name)
+                run.artifacts["model_version"] = f"{name} v{mv.version}"
+                detail = f"등록·기록: {name} v{mv.version}"
+                try:
+                    mlflow.tracking.MlflowClient().set_registered_model_alias(
+                        name, "production", mv.version)
+                    detail = f"등록·승격: {name} v{mv.version} @production"
+                except Exception:  # noqa: BLE001
+                    pass
+            except Exception as exc:  # noqa: BLE001  모델등록만 실패 — 기록은 유지
+                detail = f"MLflow 기록(metrics) · 모델등록 스킵({str(exc)[:60]})"
         return detail
     except Exception as exc:  # noqa: BLE001
         return f"MLflow 기록 스킵: {exc}"
