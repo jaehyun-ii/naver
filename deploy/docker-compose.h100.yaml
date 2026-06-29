@@ -1,0 +1,71 @@
+# H100(공용 서버) 전용 compose — MLflow+Postgres+MinIO 인프라 + 콘솔(real 모드).
+# GB10용 docker-compose.yaml과 달리: ①named 볼륨 대신 /raid/workspace/jaehyun bind-mount
+# ②포트 25xxx 대역(충돌 회피) ③x86 이미지 ④콘솔에 docker.sock+real-mode env+MLflow+postgres
+# ⑤빈 GPU(4·5·6) 스케줄. 실행: docker compose -f deploy/docker-compose.h100.yaml up -d
+name: llmops-h100
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes: ["/raid/workspace/jaehyun/infra/pg:/var/lib/postgresql/data"]
+    ports: ["25432:5432"]
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes: ["/raid/workspace/jaehyun/infra/minio:/data"]
+    ports: ["29000:9000", "29001:9001"]
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on: [minio]
+    entrypoint: >
+      /bin/sh -c "until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 2; done;
+      mc mb -p local/dev-demo-models local/dev-demo-datasets local/dev-shared-eval; echo buckets ready"
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.13.0
+    depends_on: [postgres, minio]
+    command: >
+      /bin/sh -c "pip install psycopg2-binary boto3 >/dev/null 2>&1;
+      mlflow server --host 0.0.0.0 --port 5000
+      --backend-store-uri postgresql://mlflow:mlflow@postgres/mlflow
+      --artifacts-destination s3://dev-demo-models"
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+    ports: ["25000:5000"]
+
+  console:
+    image: llmops/core:x86
+    depends_on: [postgres, mlflow]
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock"          # real 모드 오케스트레이션(사용자 허용)
+      - "/raid/workspace/jaehyun:/raid/workspace/jaehyun"      # 워크스페이스(호스트 경로 = 컨테이너 경로)
+      - "/raid/workspace/jaehyun/naver/llmops_core:/app/llmops_core:ro"  # 라이브 코드(git pull 반영)
+    environment:
+      LLMOPS_GATEWAY__MASTER_KEY: sk-master-changeme
+      LLMOPS_STORE__BACKEND: postgres
+      LLMOPS_STORE__DSN: postgresql://mlflow:mlflow@postgres:5432/mlflow
+      LLMOPS_MLFLOW__TRACKING_URI: http://mlflow:5000
+      LLMOPS_EXEC__WORK_DIR: /raid/workspace/jaehyun/runs
+      LLMOPS_EXEC__HF_CACHE: /raid/workspace/jaehyun/hf/hub
+      LLMOPS_EXEC__REPO_DIR: /raid/workspace/jaehyun/naver/llmops_core
+      LLMOPS_EXEC__CONFIG_PATH: /raid/workspace/jaehyun/naver/config/model_list.yaml
+      LLMOPS_EXEC__TRAIN_IMAGE: llmops/train:x86
+      LLMOPS_EXEC__SERVE_BACKEND: vllm
+      LLMOPS_EXEC__VLLM_IMAGE: vllm/vllm-openai:latest
+      LLMOPS_EXEC__SERVE_PORT: "28700"
+      LLMOPS_EXEC__SERVE_CONTAINER: jh-tuned-serving
+      LLMOPS_EXEC__GATEWAY_CONTAINER: jh-no-gateway
+      LLMOPS_ORCH__NODES: '[{"name":"local","devices":[4,5,6]}]'
+    command: ["uvicorn", "llmops_core.console.app:app", "--host", "0.0.0.0", "--port", "4100"]
+    ports: ["24100:4100"]
