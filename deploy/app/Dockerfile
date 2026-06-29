@@ -6,8 +6,15 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# 콘솔 real 모드 오케스트레이션용 docker CLI(정적 클라이언트만, 데몬은 호스트 docker.sock 사용).
+# x86_64 전제. aarch64면 URL의 x86_64→aarch64로.
+RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.3.1.tgz \
+      | tar xz -C /tmp \
+    && mv /tmp/docker/docker /usr/local/bin/docker \
+    && rm -rf /tmp/docker
 
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
