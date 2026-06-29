@@ -26,6 +26,17 @@ def test_single_node_8gpu_assigns_distinct_devices():
     assert again.devices == leases[0].devices
 
 
+def test_explicit_devices_for_shared_server():
+    # 공용 서버: 빈 GPU 4,5,6만 사용
+    s = GpuScheduler([GpuNode(name="local", devices=[4, 5, 6])])
+    assert s.total_gpus == 3
+    leases = [s.acquire(1) for _ in range(3)]
+    assert sorted(d for ls in leases for d in ls.devices) == [4, 5, 6]
+    assert leases[0].device_arg in ("device=4", "device=5", "device=6")
+    with pytest.raises(TimeoutError):
+        s.acquire(1, timeout=0.2)  # 4번째 불가
+
+
 def test_multi_gpu_job_device_arg():
     s = GpuScheduler([GpuNode(name="local", gpus=8)])
     lease = s.acquire(4)  # 4-GPU 잡

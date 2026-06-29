@@ -44,9 +44,10 @@ class GpuScheduler:
 
     def __init__(self, nodes: list | None = None) -> None:
         cfg_nodes = nodes if nodes is not None else get_settings().orch.nodes
-        self._nodes: list[_Node] = [
-            _Node(n.name, n.docker_host, list(range(n.gpus)), n.gpus) for n in cfg_nodes
-        ]
+        self._nodes: list[_Node] = []
+        for n in cfg_nodes:
+            devs = list(n.devices) if getattr(n, "devices", None) else list(range(n.gpus))
+            self._nodes.append(_Node(n.name, n.docker_host, devs, len(devs)))
         self._lock = threading.Condition()
         self._held: dict[str, Lease] = {}  # 장기 점유(서빙 등) tag→Lease
 

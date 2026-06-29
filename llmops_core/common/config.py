@@ -63,6 +63,7 @@ class GpuNode(BaseModel):
     name: str = "local"
     docker_host: str | None = None  # 예: tcp://10.0.0.2:2375 (원격 노드)
     gpus: int = 1
+    devices: list[int] | None = None  # 명시적 디바이스 ID(공용 서버 빈 GPU 지정). 없으면 range(gpus)
 
 
 class OrchestrationSettings(BaseModel):
