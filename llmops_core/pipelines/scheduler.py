@@ -45,10 +45,30 @@ def trigger_once(
         return run
 
 
+def trigger_drift_gated(
+    console: str, master: str, *, baseline: str, current_file: str,
+    mode: str, method: str, served_name: str, max_steps: int,
+    timeout: float = 1800.0,
+) -> dict:
+    """드리프트 게이트: 운영 데이터(current_file)로 드리프트 검사 → 감지 시에만 재학습·배포."""
+    h = {"X-Master-Key": master, "Content-Type": "application/json"}
+    with open(current_file, encoding="utf-8") as f:
+        current = [ln.strip() for ln in f if ln.strip()]
+    body = {"baseline_name": baseline, "current_texts": current, "auto_approve": True,
+            "mode": mode, "method": method, "served_name": served_name,
+            "train_max_steps": max_steps}
+    with httpx.Client(timeout=timeout) as c:
+        return c.post(f"{console}/api/drift/auto-retrain", headers=h, json=body).json()
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="로컬 재학습 스케줄러(Argo Cron 대체)")
     p.add_argument("--console", default="http://localhost:4101")
     p.add_argument("--master", default="sk-master-changeme")
+    p.add_argument("--drift-baseline", default=None,
+                   help="설정 시 드리프트 게이트 모드: 기준선명")
+    p.add_argument("--current-file", default=None,
+                   help="드리프트 검사할 운영 데이터(텍스트 줄 단위) 파일")
     p.add_argument("--mode", default="real", choices=["real", "sim"])
     p.add_argument("--method", default="sft", choices=["sft", "dpo", "grpo"])
     p.add_argument("--pet", default="lora", choices=["lora", "dora"])
@@ -60,6 +80,14 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     def cycle() -> None:
+        if args.drift_baseline and args.current_file:
+            r = trigger_drift_gated(
+                args.console, args.master, baseline=args.drift_baseline,
+                current_file=args.current_file, mode=args.mode, method=args.method,
+                served_name=args.served_name, max_steps=args.max_steps)
+            print(f"[scheduler] 드리프트={r.get('drift')} 재학습={r.get('triggered')} "
+                  f"run={r.get('run_id')} · {r.get('reason')}", flush=True)
+            return
         run = trigger_once(
             args.console, args.master, mode=args.mode, method=args.method, pet=args.pet,
             served_name=args.served_name, max_steps=args.max_steps, auto_approve=args.auto_approve,

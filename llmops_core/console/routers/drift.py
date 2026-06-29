@@ -31,6 +31,20 @@ class CheckBody(BaseModel):
     thresholds: dict[str, float] | None = None
 
 
+class AutoRetrainBody(BaseModel):
+    baseline_name: str  # 비교 기준선
+    current_texts: list[str]  # 운영 데이터 표본(드리프트 검사 대상)
+    thresholds: dict[str, float] | None = None
+    auto_approve: bool = True  # 게이트 통과분 자동 승인·배포
+    # 재학습 데이터/설정(드리프트 감지 시 사용)
+    mode: str = "sim"
+    method: str = "sft"
+    served_name: str = "hcx-seed-tuned"
+    train_max_steps: int = 20
+    labeled: list[dict] | None = None
+    preference: list[dict] | None = None
+
+
 @router.get("/baselines")
 def list_baselines() -> list[dict]:
     return [{"name": b["name"], "n": b["summary"].get("n"),
@@ -65,3 +79,31 @@ def check(body: CheckBody) -> dict:
         "thresholds": rep.thresholds, "n_reference": rep.n_reference,
         "n_current": rep.n_current, "details": rep.details,
     }
+
+
+@router.post("/auto-retrain")
+def auto_retrain(
+    body: AutoRetrainBody, principal: Principal = Depends(require_perm("pipeline:run")),
+) -> dict:
+    """폐루프: 드리프트 검사 → 감지 시 재학습 파이프라인 트리거(+자동 승인·배포)."""
+    from llmops_core.console.schemas import RunPipelineBody
+    from llmops_core.monitoring.retrain import check_and_retrain
+
+    retrain_body = RunPipelineBody(
+        name="drift-retrain", mode=body.mode, method=body.method,
+        served_name=body.served_name, train_max_steps=body.train_max_steps,
+        labeled=body.labeled, preference=body.preference,
+    )
+    svc = services()
+    try:
+        result = check_and_retrain(
+            svc, baseline_name=body.baseline_name, current_texts=body.current_texts,
+            retrain_body=retrain_body, thresholds=body.thresholds,
+            auto_approve=body.auto_approve,
+        )
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    svc.audit.record(principal.subject, "drift.auto_retrain",
+                     target=body.baseline_name,
+                     detail={"drift": result["drift"], "triggered": result["triggered"]})
+    return result
