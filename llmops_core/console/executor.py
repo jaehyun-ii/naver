@@ -192,7 +192,7 @@ class RealExecutor:
         tail = [
             *self._common_mounts(),
             "-v", f"{rd}:/work",
-            "--entrypoint", "python", self.cfg.train_image,
+            "--entrypoint", "python3", self.cfg.train_image,
             "-m", "llmops_core.evaluation.local_eval",
             "--base", base_model or self.cfg.base_model,
             "--adapter", "/work/adapter",
@@ -222,7 +222,7 @@ class RealExecutor:
             "\n".join(json.dumps(r, ensure_ascii=False) for r in eval_cases), encoding="utf-8")
         tail = [
             *self._common_mounts(), "-v", f"{rd}:/work",
-            "--entrypoint", "python", self.cfg.train_image,
+            "--entrypoint", "python3", self.cfg.train_image,
             "-m", "llmops_core.tuning.run",
             "--train", "/work/train.jsonl", "--eval", "/work/eval.jsonl",
             "--base", base_model or self.cfg.base_model,
@@ -242,7 +242,7 @@ class RealExecutor:
         tail = [
             *self._common_mounts(),
             "-v", f"{rd}:/work",
-            "--entrypoint", "python", self.cfg.train_image,
+            "--entrypoint", "python3", self.cfg.train_image,
             "-m", "llmops_core.registry.merge",
             "--base", base_model or self.cfg.base_model,
             "--adapter", "/work/adapter",
