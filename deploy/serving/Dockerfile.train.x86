@@ -1,0 +1,14 @@
+# H100(x86_64) 학습 이미지 — vLLM 이미지(torch+CUDA·bitsandbytes) 베이스에 학습 의존성.
+# 호스트 설치 없이 Docker 내부에서만 구성. QLoRA(4bit)는 bitsandbytes로 x86에서 동작.
+# GB10(aarch64 Blackwell)은 Dockerfile.train(NGC) 사용, H100 등 x86은 이 파일 사용.
+FROM vllm/vllm-openai:latest
+
+# transformers는 trl 호환 4.56로 핀닝 + 학습 라이브러리(베이스 torch/bnb 유지)
+RUN pip install --no-cache-dir \
+    "transformers>=4.46,<4.57" "trl>=0.19,<0.24" "peft>=0.13" \
+    "datasets>=3.0" "optuna>=3.6"
+
+WORKDIR /app
+COPY llmops_core /app/llmops_core
+ENV HF_HOME=/hf
+ENTRYPOINT ["python3", "-m", "llmops_core.training.run"]

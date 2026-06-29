@@ -224,11 +224,13 @@ def _pre_approval(svc, run: PipelineRun, body: RunPipelineBody) -> None:
         if run.mode == "real":
             from llmops_core.console.executor import RealExecutor
 
-            adapter = RealExecutor().finetune(
+            ex = RealExecutor()
+            adapter = ex.finetune(
                 run.id, train_rows, base_model=None, method=body.method, use_dora=use_dora,
                 max_steps=body.train_max_steps, epochs=body.train_epochs,
             )
             run.artifacts["adapter"] = adapter
+            run.loss_history = ex.last_loss  # 차트용 step별 loss
             ft.detail = (f"SEED-0.5B {body.method.upper()}/{pet_label}(bf16) · "
                          f"steps={body.train_max_steps} → {adapter}")
         else:

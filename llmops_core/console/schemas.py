@@ -97,6 +97,7 @@ class PipelineRun(BaseModel):
     stages: list[PipelineStage] = Field(default_factory=list)
     release_id: str | None = None  # release-gate가 생성한 승인 요청 ID
     artifacts: dict[str, str] = Field(default_factory=dict)  # adapter/merged/serve_url 등
+    loss_history: list[dict] = Field(default_factory=list)  # 학습 step별 loss(차트용)
     created_at: float | None = None
 
 

@@ -33,3 +33,6 @@ prompt_store/
 
 # 설계/결과 문서(별도 관리)
 docs/
+
+# VPN 인증서(절대 커밋 금지)
+*.ovpn

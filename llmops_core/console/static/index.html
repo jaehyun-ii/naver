@@ -43,6 +43,24 @@
     .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
     .kv { font-size:12px; color:var(--muted); } .mono { font-family:ui-monospace,monospace; }
     label.fld { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+    .help { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px;
+            border-radius:50%; background:var(--panel2); color:var(--accent); font-size:10px; cursor:help;
+            margin-left:5px; border:1px solid var(--line); position:relative; vertical-align:middle; }
+    .help .tip { visibility:hidden; opacity:0; transition:opacity .15s; position:absolute; z-index:50;
+                 bottom:130%; left:50%; transform:translateX(-50%); width:240px; background:#0b1220;
+                 border:1px solid var(--accent); color:var(--fg); padding:8px 10px; border-radius:8px;
+                 font-size:12px; line-height:1.5; font-weight:400; text-align:left; box-shadow:0 4px 16px rgba(0,0,0,.5); }
+    .help:hover .tip { visibility:visible; opacity:1; }
+    .nav .group { color:var(--muted); font-size:11px; padding:14px 20px 4px; letter-spacing:.5px; text-transform:uppercase; }
+    .steps { display:flex; gap:10px; flex-wrap:wrap; margin:14px 0; }
+    .step { flex:1; min-width:150px; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; }
+    .step .num { display:inline-flex; width:24px; height:24px; border-radius:50%; background:var(--accent);
+                 color:#04101f; font-weight:700; align-items:center; justify-content:center; margin-bottom:8px; }
+    .wzbar { display:flex; gap:6px; margin-bottom:18px; }
+    .wzbar .s { flex:1; text-align:center; padding:8px 4px; border-radius:8px; font-size:12px; background:var(--panel2); color:var(--muted); }
+    .wzbar .s.on { background:var(--accent); color:#04101f; font-weight:600; }
+    .wzbar .s.done { background:#0f2e16; color:var(--ok); }
+    .hero { background:linear-gradient(135deg,#16233a,#1a2230); border:1px solid var(--line); border-radius:12px; padding:22px; margin-bottom:16px; }
   </style>
 </head>
 <body>
@@ -60,6 +78,93 @@ const api = async (path, { method = "GET", body, master } = {}) => {
   return data;
 };
 const parseJsonl = (txt) => txt.split("\n").map(l => l.trim()).filter(Boolean).map(l => JSON.parse(l));
+
+// ── 자동갱신 훅 (실시간) ──
+function useAutoRefresh(fn, ms, on) {
+  useEffect(() => {
+    if (!on) return; fn();
+    const t = setInterval(fn, ms); return () => clearInterval(t);
+  }, [on, ms, fn]);
+}
+
+// ── 도움말 툴팁 + 친절한 상태 ──
+function Help({ children }) {
+  return <span className="help">?<span className="tip">{children}</span></span>;
+}
+// 기술 상태 → 쉬운 한국어
+const STATUS_KO = {
+  running:"진행 중", "post-running":"배포 진행 중", waiting:"승인 대기", succeeded:"완료",
+  failed:"실패", pending:"대기", skipped:"건너뜀",
+};
+const ko = (s)=>STATUS_KO[s]||s;
+// 단계명 → 쉬운 설명
+const STAGE_KO = {
+  "data-ingest":"데이터 정리", "data-quality":"품질 검사", "data-build":"데이터셋 만들기",
+  "finetune":"AI 학습", "evaluate":"성능 평가", "release-gate":"승인 요청",
+  "release-approval":"승인 대기", "register":"모델 등록", "convert":"모델 변환", "deploy":"서비스 배포",
+};
+
+// ── 의존성 없는 SVG 차트 ──
+function LineChart({ values, height = 130, color = "var(--accent)", ylabel }) {
+  if (!values || !values.length) return <div className="muted">데이터 없음</div>;
+  const w = 360, h = height, pad = 26;
+  const min = Math.min(...values), max = Math.max(...values), rng = (max - min) || 1;
+  const xy = values.map((v, i) => [
+    pad + i * (w - 2 * pad) / Math.max(values.length - 1, 1),
+    h - pad - (v - min) / rng * (h - 2 * pad)]);
+  const d = xy.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", maxWidth: w }}>
+      <line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke="var(--line)" />
+      <line x1={pad} y1={pad - 4} x2={pad} y2={h - pad} stroke="var(--line)" />
+      <path d={d} fill="none" stroke={color} strokeWidth="2" />
+      {xy.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2.5" fill={color} />)}
+      <text x={pad + 2} y={pad - 8} fontSize="10" fill="var(--muted)">{ylabel || ""} max {max.toFixed(3)}</text>
+      <text x={pad + 2} y={h - pad - 4} fontSize="10" fill="var(--muted)">min {min.toFixed(3)}</text>
+    </svg>);
+}
+
+function BarChart({ data, height = 150, fmt }) {
+  if (!data || !data.length) return <div className="muted">데이터 없음</div>;
+  const w = 360, h = height, pad = 28;
+  const max = Math.max(...data.map(d => Math.max(d.value, d.threshold || 0)), 1e-6);
+  const gap = (w - 2 * pad) / data.length, bw = gap * 0.55;
+  const yOf = v => h - pad - (v / max) * (h - 2 * pad);
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} style={{ width: "100%", maxWidth: w }}>
+      <line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke="var(--line)" />
+      {data.map((d, i) => {
+        const x = pad + i * gap + gap * 0.22, over = d.threshold != null && d.value > d.threshold;
+        return (
+          <g key={i}>
+            <rect x={x} y={yOf(d.value)} width={bw} height={h - pad - yOf(d.value)}
+                  fill={over ? "var(--err)" : "var(--ok)"} rx="2" />
+            {d.threshold != null &&
+              <line x1={x - 3} x2={x + bw + 3} y1={yOf(d.threshold)} y2={yOf(d.threshold)}
+                    stroke="var(--warn)" strokeWidth="1.5" strokeDasharray="3 2" />}
+            <text x={x + bw / 2} y={yOf(d.value) - 4} fontSize="9" fill="var(--fg)" textAnchor="middle">
+              {fmt ? fmt(d.value) : d.value}</text>
+            <text x={x + bw / 2} y={h - pad + 12} fontSize="9" fill="var(--muted)" textAnchor="middle">{d.label}</text>
+          </g>);
+      })}
+    </svg>);
+}
+
+function Gauge({ value, label, max = 100, unit = "%" }) {
+  const pct = Math.max(0, Math.min(value / max, 1));
+  const color = pct > 0.8 ? "var(--err)" : pct > 0.5 ? "var(--warn)" : "var(--ok)";
+  return (
+    <div style={{ textAlign: "center", minWidth: 88 }}>
+      <svg viewBox="0 0 80 48" style={{ width: 84 }}>
+        <path d="M8 44 A 32 32 0 0 1 72 44" fill="none" stroke="var(--line)" strokeWidth="7" />
+        <path d="M8 44 A 32 32 0 0 1 72 44" fill="none" stroke={color} strokeWidth="7"
+              strokeLinecap="round" strokeDasharray={`${pct * 100.5} 999`} />
+        <text x="40" y="40" textAnchor="middle" fontSize="15" fontWeight="700" fill="var(--fg)">
+          {Math.round(value)}{unit}</text>
+      </svg>
+      <div className="kv" style={{ marginTop: -2 }}>{label}</div>
+    </div>);
+}
 
 // ── Master key bar ──
 function MasterBar({ master, setMaster }) {
@@ -400,6 +505,10 @@ function Pipeline({ master }) {
           <td><b style={{color:STAGE_CLR[s.status]||"var(--fg)"}}>{s.status}</b></td>
           <td className="kv">{s.detail}</td>
         </tr>)}</tbody></table>
+        {run.loss_history && run.loss_history.length>0 && <div style={{marginTop:8}}>
+          <div className="muted">학습 loss 곡선 ({run.loss_history.length} steps)</div>
+          <LineChart values={run.loss_history.map(p=>p.loss)} ylabel="loss" color="var(--err)" />
+        </div>}
         {run.artifacts && Object.keys(run.artifacts).length>0 && <div className="kv" style={{marginTop:8}}>
           {Object.entries(run.artifacts).map(([k,v])=><div key={k}><b>{k}</b>: <span className="mono">{v}</span></div>)}
         </div>}
@@ -418,15 +527,20 @@ function Dashboard({ master }) {
   if (!d) return <div><h2>대시보드</h2><div className="sub">{err?<span className="err">⚠ {err}</span>:"master key 입력 필요"}</div></div>;
   return (
     <div>
-      <h2>대시보드 — 인프라 · GPU · 하이브리드</h2>
-      <div className="sub">온프레미스-NCP 하이브리드 GPU 학습·운영 + GPU 자원 최적화 현황.</div>
+      <h2>대시보드 — 인프라 · GPU · 하이브리드 <span className="pill" style={{background:"#10261f",color:"var(--ok)",fontSize:10}}>● LIVE 5s</span></h2>
+      <div className="sub">온프레미스-NCP 하이브리드 GPU 학습·운영 + GPU 자원 최적화 현황 (자동 갱신).</div>
       <div className="grid2">
         <div className="card">
-          <b>GPU 자원</b>
-          {d.gpus.length ? <table><thead><tr><th>GPU</th><th>메모리</th><th>사용률</th><th>온도</th></tr></thead>
-            <tbody>{d.gpus.map((g,i)=><tr key={i}><td>{g.name}</td>
-              <td>{g.mem_used_mb}/{g.mem_total_mb}MB</td><td>{g.util_pct}%</td><td>{g.temp_c}°C</td></tr>)}</tbody></table>
-            : <div className="muted">GPU 미감지</div>}
+          <b>GPU 사용률 · 메모리</b>
+          {d.gpus.length ? <div>
+            <div className="bar" style={{flexWrap:"wrap",marginTop:8,gap:14}}>
+              {d.gpus.map((g,i)=><Gauge key={i} value={g.util_pct} label={`GPU${i} 사용률`} />)}
+            </div>
+            <div className="bar" style={{flexWrap:"wrap",marginTop:8,gap:14}}>
+              {d.gpus.map((g,i)=><Gauge key={i} value={g.mem_total_mb?100*g.mem_used_mb/g.mem_total_mb:0} label={`GPU${i} 메모리`} />)}
+            </div>
+            <div className="kv" style={{marginTop:6}}>{d.gpus[0].name} · {d.gpus[0].temp_c}°C</div>
+          </div> : <div className="muted">GPU 미감지</div>}
         </div>
         <div className="card">
           <b>GPU 스케줄러 (노드·디바이스 풀)</b>
@@ -497,9 +611,13 @@ function HPO({ master }) {
       {run&&<div className="card">
         <div className="bar"><b>{run.id}</b><span className="pill" style={{background:"#10261f",color:STAGE_CLR[run.status]||"var(--fg)"}}>{run.status}</span></div>
         {run.best_params&&<div className="kv">최적: <span className="mono">{JSON.stringify(run.best_params)}</span> · score={run.best_value}</div>}
-        {run.trials&&run.trials.length>0&&<table><thead><tr><th>trial</th><th>lr</th><th>r</th><th>alpha</th><th>score</th></tr></thead>
-          <tbody>{run.trials.map((t,i)=><tr key={i}><td>{t.trial}</td><td>{t.params.learning_rate}</td>
-            <td>{t.params.lora_r}</td><td>{t.params.lora_alpha}</td><td><b>{t.score}</b></td></tr>)}</tbody></table>}
+        {run.trials&&run.trials.length>0&&<div>
+          <div className="muted" style={{marginTop:6}}>trial 점수 추이</div>
+          <LineChart values={run.trials.map(t=>t.score)} ylabel="score" color="var(--ok)" />
+          <table><thead><tr><th>trial</th><th>lr</th><th>r</th><th>alpha</th><th>score</th></tr></thead>
+          <tbody>{run.trials.map((t,i)=><tr key={i} style={run.best_value===t.score?{background:"#10261f"}:{}}><td>{t.trial}</td><td>{t.params.learning_rate}</td>
+            <td>{t.params.lora_r}</td><td>{t.params.lora_alpha}</td><td><b>{t.score}</b></td></tr>)}</tbody></table>
+        </div>}
       </div>}
     </div>
   );
@@ -559,6 +677,10 @@ function EvalVersions({ master }) {
       <div className="sub">데이터 버전(fingerprint)별로 학습·평가 결과를 모아 비교. 같은/다른 데이터 버전의 모델 성능 추적.</div>
       {err&&<div className="err">⚠ {err}</div>}
       <div className="bar"><button className="btn ghost" onClick={load} disabled={!master}>새로고침</button></div>
+      {groups.filter(g=>g.best_score!=null).length>1&&<div className="card">
+        <b>버전별 최고 점수 비교</b>
+        <BarChart data={groups.filter(g=>g.best_score!=null).map(g=>({label:g.fingerprint.slice(0,6),value:g.best_score}))} fmt={v=>v.toFixed(2)} />
+      </div>}
       {groups.map((g,i)=><div className="card" key={i}>
         <div className="bar"><b className="mono">{g.fingerprint.slice(0,16)}…</b>
           <span className="muted">runs={g.num_runs}</span>
@@ -604,6 +726,8 @@ function Drift({ master }) {
         <div className="bar"><b>{rep.name}</b>
           <span className="pill" style={{background:rep.drift?"#3a1414":"#0f2e16",color:rep.drift?"var(--err)":"var(--ok)"}}>{rep.drift?"드리프트 감지":"안정"}</span>
           <span className="muted">ref={rep.n_reference} · cur={rep.n_current}</span></div>
+        <div className="muted">점수 vs 임계(점선) — 초과 시 빨강</div>
+        <BarChart data={Object.entries(rep.scores).map(([k,v])=>({label:k,value:v,threshold:rep.thresholds[k]}))} fmt={v=>v.toFixed(2)} />
         <table><thead><tr><th>지표</th><th>점수</th><th>임계</th><th>판정</th></tr></thead>
         <tbody>{Object.entries(rep.scores).map(([k,v])=><tr key={k}><td>{k}</td><td><b>{v}</b></td>
           <td className="kv">{rep.thresholds[k]}</td>
@@ -617,34 +741,252 @@ function Drift({ master }) {
   );
 }
 
-// ── App shell ──
-const TABS = [
-  ["dash","대시보드 · 인프라/GPU"],
-  ["data","데이터셋"],
-  ["pipe","파이프라인 · 학습/평가/배포"],
-  ["hpo","HPO 파라미터 최적화"],
-  ["prompt","프롬프트 엔지니어링"],
-  ["evalv","데이터 버전별 성능"],
-  ["drift","드리프트 탐지"],
-  ["keys","테넌트 정책 · 키"],
-  ["rel","승인·평가"],
-  ["play","플레이그라운드"],
+// ── Security (RBAC 토큰 · 감사로그) ──
+function Security({ master }) {
+  const [tokens,setTokens]=useState([]); const [roles,setRoles]=useState([]);
+  const [audit,setAudit]=useState([]); const [auto,setAuto]=useState(true);
+  const [f,setF]=useState({subject:"",roles:["viewer"]}); const [issued,setIssued]=useState(null); const [err,setErr]=useState("");
+  const loadT=useCallback(()=>api("/api/auth/tokens",{master}).then(setTokens).catch(e=>setErr(e.message)),[master]);
+  const loadA=useCallback(()=>api("/api/audit",{master}).then(setAudit).catch(()=>{}),[master]);
+  useEffect(()=>{ if(master){ api("/api/auth/roles",{master}).then(d=>setRoles(d.roles)).catch(()=>{}); loadT(); } },[master,loadT]);
+  useAutoRefresh(loadA, 4000, !!master&&auto);
+  const toggleRole=r=>setF(s=>({...s,roles:s.roles.includes(r)?s.roles.filter(x=>x!==r):[...s.roles,r]}));
+  const issue=async()=>{ setErr("");
+    try{ setIssued(await api("/api/auth/tokens",{method:"POST",master,body:{subject:f.subject,roles:f.roles}})); loadT(); }catch(e){setErr(e.message);} };
+  const revoke=async id=>{ try{ await api("/api/auth/tokens/"+id,{method:"DELETE",master}); loadT(); }catch(e){setErr(e.message);} };
+  return (
+    <div>
+      <h2>보안 — RBAC 토큰 · 감사로그</h2>
+      <div className="sub">역할 기반 접근통제 토큰 발급/폐기, 권한 동작 감사 추적. master key=admin.</div>
+      {err&&<div className="err">⚠ {err}</div>}
+      <div className="grid2">
+        <div className="card"><b>역할 토큰 발급</b>
+          <div className="bar" style={{marginTop:8}}><input value={f.subject} onChange={e=>setF({...f,subject:e.target.value})} placeholder="subject (사용자/서비스)" style={{width:200}}/></div>
+          <div className="bar" style={{flexWrap:"wrap"}}>{roles.map(r=>
+            <span key={r} className="pill" style={{cursor:"pointer",background:f.roles.includes(r)?"#0f2e16":"var(--panel2)",color:f.roles.includes(r)?"var(--ok)":"var(--muted)"}} onClick={()=>toggleRole(r)}>{r}</span>)}</div>
+          <div className="bar"><button className="btn" onClick={issue} disabled={!master||!f.subject||!f.roles.length}>발급</button></div>
+          {issued&&<div className="kv">토큰(1회): <span className="mono" style={{color:"var(--ok)"}}>{issued.token}</span><div className="muted">Authorization: Bearer 로 사용</div></div>}
+        </div>
+        <div className="card"><b>발급된 토큰</b>
+          <table><thead><tr><th>token_id</th><th>subject</th><th>역할</th><th></th></tr></thead>
+          <tbody>{tokens.map((t,i)=><tr key={i}><td className="mono">{t.token_id}</td><td>{t.subject}</td>
+            <td className="kv">{(t.roles||[]).join(", ")}</td>
+            <td><button className="btn danger" style={{padding:"2px 8px"}} onClick={()=>revoke(t.token_id)}>폐기</button></td></tr>)}
+            {!tokens.length&&<tr><td colSpan="4" className="muted">없음</td></tr>}</tbody></table></div>
+      </div>
+      <div className="card">
+        <div className="bar"><b>감사로그</b><span className="pill" style={{background:"#10261f",color:auto?"var(--ok)":"var(--muted)",fontSize:10}}>● {auto?"LIVE 4s":"정지"}</span>
+          <button className="btn ghost" style={{padding:"2px 8px"}} onClick={()=>setAuto(a=>!a)}>{auto?"멈춤":"자동"}</button></div>
+        <table><thead><tr><th>시각</th><th>주체</th><th>동작</th><th>대상</th></tr></thead>
+        <tbody>{audit.slice(0,30).map((e,i)=><tr key={i}><td className="kv">{String(e.ts).slice(0,19).replace("T"," ")}</td>
+          <td>{e.actor}</td><td><b>{e.action}</b></td><td className="mono">{e.target||"-"}</td></tr>)}
+          {!audit.length&&<tr><td colSpan="4" className="muted">기록 없음</td></tr>}</tbody></table></div>
+    </div>
+  );
+}
+
+// ── Serving (카나리/블루그린 롤아웃) ──
+function Serving({ master }) {
+  const [name,setName]=useState("hcx-seed-tuned"); const [st,setSt]=useState(null); const [err,setErr]=useState("");
+  const load=async()=>{ setErr(""); try{ setSt(await api(`/api/serving/rollout/${name}`,{master})); }catch(e){setErr(e.message);} };
+  const act=async(kind)=>{ setErr(""); try{ await api(`/api/serving/${name}/${kind}`,{method:"POST",master}); load(); }catch(e){setErr(e.message);} };
+  const bar=(w,color)=><div style={{height:14,background:"var(--panel2)",borderRadius:7,overflow:"hidden",flex:1}}>
+    <div style={{width:(w||0)+"%",height:"100%",background:color}}/></div>;
+  return (
+    <div>
+      <h2>서빙 — 카나리/블루그린 배포</h2>
+      <div className="sub">신모델을 소량(weight%) 노출 → 지표 확인 → 승격(100%) 또는 롤백(0%). 게이트웨이 가중 라우팅.</div>
+      {err&&<div className="err">⚠ {err}</div>}
+      <div className="card">
+        <div className="bar"><label className="muted">논리 모델명<input value={name} onChange={e=>setName(e.target.value)} style={{marginLeft:6,width:180}}/></label>
+          <button className="btn" onClick={load} disabled={!master}>롤아웃 조회</button></div>
+        {st&&<div style={{marginTop:10}}>
+          {st.stable&&<div className="bar"><span style={{width:80}} className="kv">stable {st.stable.weight}%</span>{bar(st.stable.weight,"var(--ok)")}<span className="mono kv">{st.stable.api_base}</span></div>}
+          {st.canary?<div className="bar" style={{marginTop:6}}><span style={{width:80}} className="kv">canary {st.canary.weight}%</span>{bar(st.canary.weight,"var(--warn)")}<span className="mono kv">{st.canary.api_base}</span></div>
+            :<div className="muted" style={{marginTop:6}}>카나리 없음 (단일 stable)</div>}
+          {st.canary&&<div className="bar" style={{marginTop:10}}>
+            <button className="btn ok" onClick={()=>act("promote")}>승격 → 100%</button>{" "}
+            <button className="btn danger" onClick={()=>act("rollback")}>롤백 → stable</button></div>}
+        </div>}
+      </div>
+      <div className="muted">카나리 배포는 파이프라인의 배포 단계 또는 executor.deploy_canary로 생성됩니다(다중 GPU 필요). 여기선 상태 조회·승격·롤백.</div>
+    </div>
+  );
+}
+
+// ── Home (시작하기) ──
+const FLOW = [
+  ["1","데이터 준비","AI에게 가르칠 질문·답변 예시를 모읍니다."],
+  ["2","AI 학습","준비한 데이터로 모델을 도메인에 맞게 학습합니다."],
+  ["3","성능 평가","학습된 모델이 잘 답하는지 자동으로 채점합니다."],
+  ["4","승인","평가를 통과하면 담당자가 배포를 승인합니다."],
+  ["5","배포·사용","승인된 모델을 서비스에 올려 바로 사용합니다."],
 ];
+function Home({ master, nav }) {
+  const [stat,setStat]=useState(null);
+  useEffect(()=>{ if(!master) return;
+    Promise.all([
+      api("/api/pipeline/runs",{master}).catch(()=>[]),
+      api("/api/models",{master}).catch(()=>({models:[]})),
+      api("/api/infra",{master}).catch(()=>({services:[]})),
+    ]).then(([runs,models,infra])=>setStat({runs:runs.length,done:runs.filter(r=>r.status==="succeeded").length,models:(models.models||[]).length,services:(infra.services||[]).length}));
+  },[master]);
+  return (
+    <div>
+      <div className="hero">
+        <h2 style={{fontSize:24,margin:0}}>조선·선박 특화 AI 모델 운영 콘솔</h2>
+        <div className="sub" style={{marginTop:8,fontSize:14}}>전문 지식이 없어도 <b>데이터 준비 → 학습 → 평가 → 승인 → 배포</b>를 단계별 안내로 끝낼 수 있습니다.</div>
+        {!master && <div className="err" style={{marginTop:8}}>먼저 상단 <b>Master Key</b>에 <span className="mono">sk-master-changeme</span> 입력 후 저장하세요.</div>}
+        <div className="bar" style={{marginTop:14}}>
+          <button className="btn" style={{fontSize:15,padding:"10px 20px"}} onClick={()=>nav("wizard")} disabled={!master}>🚀 가이드 실행 시작</button>
+          <button className="btn ghost" onClick={()=>nav("play")} disabled={!master}>배포된 모델 사용해보기</button>
+        </div>
+      </div>
+      <b>진행 순서</b>
+      <div className="steps">{FLOW.map(([n,t,d])=>
+        <div className="step" key={n}><div className="num">{n}</div><div style={{fontWeight:600}}>{t}</div><div className="kv" style={{marginTop:4}}>{d}</div></div>)}</div>
+      {stat && <div className="grid2">
+        <div className="card"><b>현재 상태</b>
+          <table><tbody>
+            <tr><td>지금까지 실행한 작업</td><td><b>{stat.runs}건</b> (완료 {stat.done})</td></tr>
+            <tr><td>배포된 모델</td><td><b>{stat.models}개</b></td></tr>
+            <tr><td>가동 중인 인프라 서비스</td><td><b>{stat.services}개</b></td></tr>
+          </tbody></table>
+        </div>
+        <div className="card"><b>도움말</b>
+          <div className="kv" style={{lineHeight:1.7}}>
+            • 처음이라면 <b>가이드 실행</b> 버튼으로 시작하세요.<br/>
+            • 세부 조정은 왼쪽 <b>고급</b> 메뉴에서 가능합니다.<br/>
+            • 용어 옆 <Help>이렇게 물음표를 누르면 설명이 나옵니다.</Help> 표시를 누르면 설명이 나옵니다.
+          </div>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+// ── Wizard (가이드 실행) ──
+const WZ_STEPS = ["데이터 준비","학습 설정","학습·평가","검토·승인","완료"];
+function Wizard({ master, nav }) {
+  const [step,setStep]=useState(0);
+  const [data,setData]=useState('{"text":"선급증서 유효기간이 지나면 어떻게 하나요?","response":"즉시 선급기관에 재검사를 신청해 갱신합니다."}\n{"text":"공장인수시험에 불합격하면?","response":"부적합 항목을 시정조치 요구서로 발행하고 재시험합니다."}\n{"text":"재료증명서가 없으면?","response":"공급사에 제출을 요구하고 미제출 시 입고를 보류합니다."}');
+  const [kind,setKind]=useState("qa"); // qa(일반) | pref(선호)
+  const [speed,setSpeed]=useState("quick"); // quick(즉시 체험) | real(실제 학습)
+  const [name,setName]=useState("우리회사-모델");
+  const [run,setRun]=useState(null); const [err,setErr]=useState("");
+  const onFile=(e)=>{ const f=e.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>setData(String(r.result).trim()); r.readAsText(f); };
+  const start=async()=>{ setErr("");
+    let rows; try{ rows=parseJsonl(data); }catch(e){ setErr("입력 형식이 올바르지 않습니다. 예시처럼 한 줄에 하나씩 입력하세요."); return; }
+    const body={name,mode:speed==="quick"?"sim":"real",method:kind==="pref"?"dpo":"sft",served_name:name.replace(/[^a-zA-Z0-9_-]/g,"-")||"tuned",train_max_steps:20};
+    if(kind==="pref") body.preference=rows; else body.labeled=rows;
+    try{ setRun(await api("/api/pipeline/run",{method:"POST",master,body})); setStep(2); }catch(e){ setErr(e.message); }
+  };
+  useEffect(()=>{ if(!run||!["running","post-running"].includes(run.status))return;
+    const t=setInterval(async()=>{ try{ const r=await api(`/api/pipeline/runs/${run.id}`,{master}); setRun(r);
+      if(r.status==="waiting") setStep(3); if(r.status==="succeeded") setStep(4); }catch(e){} },2000);
+    return ()=>clearInterval(t); },[run,master]);
+  useEffect(()=>{ if(run&&run.status==="waiting"&&step<3) setStep(3); if(run&&run.status==="succeeded"&&step<4) setStep(4); },[run]);
+  const approve=async()=>{ try{ await api(`/api/releases/${run.release_id}/approve`,{method:"POST",master,body:{approver:"console"}});
+    const r=await api(`/api/pipeline/runs/${run.id}/resume`,{method:"POST",master}); setRun(r); if(r.status==="succeeded")setStep(4); }catch(e){setErr(e.message);} };
+  const reject=async()=>{ try{ await api(`/api/releases/${run.release_id}/reject`,{method:"POST",master,body:{approver:"console",reason:"검토 후 반려"}});
+    setRun(await api(`/api/pipeline/runs/${run.id}/resume`,{method:"POST",master})); }catch(e){setErr(e.message);} };
+  const evalStage=run&&run.stages&&run.stages.find(s=>s.name==="evaluate");
+  return (
+    <div>
+      <h2>가이드 실행 — 5단계로 AI 모델 만들기</h2>
+      <div className="wzbar">{WZ_STEPS.map((s,i)=><div key={i} className={"s "+(i===step?"on":i<step?"done":"")}>{i<step?"✓ ":""}{i+1}. {s}</div>)}</div>
+      {err&&<div className="err">⚠ {err}</div>}
+
+      {step===0 && <div className="card">
+        <b>1단계. 학습 데이터 준비 <Help>AI에게 가르칠 "질문과 모범 답변"의 예시 모음입니다. 많을수록 좋지만 몇 개로도 체험할 수 있습니다.</Help></b>
+        <div className="kv" style={{margin:"6px 0"}}>AI에게 가르치고 싶은 <b>질문</b>과 <b>모범 답변</b>을 한 줄에 하나씩 입력하세요. (아래는 예시입니다 — 그대로 체험하거나 회사 데이터로 바꾸세요)</div>
+        <div className="bar"><input type="file" accept=".jsonl,.json,.txt" onChange={onFile}/><span className="muted">파일 업로드도 가능</span></div>
+        <textarea value={data} onChange={e=>setData(e.target.value)} style={{minHeight:140}}/>
+        <div className="bar" style={{marginTop:10}}><button className="btn" onClick={()=>setStep(1)} disabled={!master}>다음 →</button></div>
+      </div>}
+
+      {step===1 && <div className="card">
+        <b>2단계. 학습 설정</b>
+        <div className="grid2" style={{marginTop:10}}>
+          <div><div className="kv">학습 방식 <Help>일반: 질문에 답하도록 가르칩니다(대부분 이것). 선호 비교: 좋은 답/나쁜 답을 비교해 더 나은 답을 고르도록 정렬합니다.</Help></div>
+            <select value={kind} onChange={e=>setKind(e.target.value)}><option value="qa">일반 질의응답 (권장)</option><option value="pref">선호 비교</option></select></div>
+          <div><div className="kv">실행 속도 <Help>빠른 체험: GPU 없이 흐름만 즉시 확인(데모). 실제 학습: GPU로 진짜 학습(수 분 소요).</Help></div>
+            <select value={speed} onChange={e=>setSpeed(e.target.value)}><option value="quick">빠른 체험 (즉시)</option><option value="real">실제 학습 (수 분)</option></select></div>
+          <div><div className="kv">모델 이름 <Help>배포 후 이 이름으로 모델을 부릅니다.</Help></div>
+            <input value={name} onChange={e=>setName(e.target.value)}/></div>
+        </div>
+        <div className="bar" style={{marginTop:14}}><button className="btn ghost" onClick={()=>setStep(0)}>← 이전</button>
+          <button className="btn" onClick={start} disabled={!master}>학습 시작 🚀</button></div>
+      </div>}
+
+      {step===2 && <div className="card">
+        <b>3단계. 학습·평가 진행 중</b>
+        <div className="kv" style={{margin:"6px 0"}}>AI가 데이터를 학습하고 성능을 평가하고 있습니다. 잠시 기다려 주세요…</div>
+        {run&&<table><thead><tr><th>단계</th><th>상태</th></tr></thead>
+          <tbody>{run.stages.filter(s=>["data-build","finetune","evaluate"].includes(s.name)).map(s=>
+            <tr key={s.name}><td>{STAGE_KO[s.name]||s.name}</td><td><b style={{color:STAGE_CLR[s.status]}}>{ko(s.status)}</b> <span className="kv">{s.detail}</span></td></tr>)}</tbody></table>}
+        {run&&run.loss_history&&run.loss_history.length>0&&<div><div className="muted">학습 곡선(낮아질수록 좋음)</div><LineChart values={run.loss_history.map(p=>p.loss)} color="var(--err)"/></div>}
+        {run&&run.status==="failed"&&<div className="err">학습이 중단되었습니다. 데이터를 확인하고 다시 시도하세요.</div>}
+      </div>}
+
+      {step===3 && run && <div className="card">
+        <b>4단계. 검토 및 승인</b>
+        <div className="kv" style={{margin:"8px 0"}}>학습과 자동 평가를 마쳤습니다. 결과를 확인하고 배포를 승인하세요.</div>
+        <div className="card" style={{background:"var(--panel2)"}}>
+          <div>평가 결과: <b style={{color:"var(--ok)"}}>{evalStage&&evalStage.status==="succeeded"?"기준 통과 ✅":"확인 필요"}</b></div>
+          <div className="kv" style={{marginTop:4}}>{evalStage?evalStage.detail:""}</div>
+          <div className="muted" style={{marginTop:6}}>※ 자동 품질 기준을 통과한 경우에만 여기까지 옵니다. 승인하면 서비스에 배포됩니다.</div>
+        </div>
+        <div className="bar" style={{marginTop:12}}>
+          <button className="btn ok" style={{fontSize:15,padding:"10px 18px"}} onClick={approve}>승인하고 배포 →</button>
+          <button className="btn danger" onClick={reject}>반려</button>
+        </div>
+      </div>}
+
+      {step===4 && <div className="card">
+        <div className="hero" style={{textAlign:"center"}}>
+          <div style={{fontSize:40}}>🎉</div>
+          <h2 style={{margin:"6px 0"}}>배포 완료!</h2>
+          <div className="sub">모델 <b className="mono">{run&&run.artifacts&&run.artifacts.served_name}</b> 이(가) 서비스에 올라갔습니다.</div>
+          <div className="bar" style={{justifyContent:"center",marginTop:14}}>
+            <button className="btn" onClick={()=>nav("play")}>플레이그라운드에서 사용해보기 →</button>
+            <button className="btn ghost" onClick={()=>{setRun(null);setStep(0);}}>새 모델 만들기</button>
+          </div>
+        </div>
+        {run&&run.loss_history&&run.loss_history.length>0&&<div className="card"><div className="muted">학습 곡선</div><LineChart values={run.loss_history.map(p=>p.loss)} color="var(--err)"/></div>}
+      </div>}
+    </div>
+  );
+}
+
+// ── App shell ──
+const NAV_GROUPS = [
+  ["쉬운 시작", [["home","🏠 시작하기"],["wizard","🚀 가이드 실행"],["play","💬 모델 사용(플레이그라운드)"]]],
+  ["고급 · 데이터/학습", [["data","데이터셋"],["pipe","파이프라인(직접 실행)"],["hpo","파라미터 최적화"],["prompt","프롬프트"]]],
+  ["고급 · 운영/품질", [["evalv","버전별 성능"],["drift","드리프트 탐지"],["serving","서빙·카나리"],["dash","대시보드·GPU"]]],
+  ["고급 · 거버넌스", [["rel","승인·평가"],["keys","테넌트 키"],["sec","보안·RBAC/감사"]]],
+];
+const VIEWS = { home:Home, wizard:Wizard, play:Playground, data:Data, pipe:Pipeline, hpo:HPO,
+  prompt:Prompts, evalv:EvalVersions, drift:Drift, serving:Serving, dash:Dashboard,
+  rel:Releases, keys:Keys, sec:Security };
 function App() {
-  const [tab, setTab] = useState("dash");
+  const [tab, setTab] = useState("home");
   const [master, setMaster] = useState(localStorage.getItem("mk") || "");
-  const View = { dash:Dashboard, data:Data, pipe:Pipeline, hpo:HPO, prompt:Prompts,
-                 evalv:EvalVersions, drift:Drift, keys:Keys, rel:Releases, play:Playground }[tab];
+  const View = VIEWS[tab] || Home;
   return (
     <div className="app">
       <div className="side">
         <div className="brand">⚙ LLMOps 콘솔</div>
-        <div className="nav">{TABS.map(([k,label]) =>
-          <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{label}</button>)}</div>
+        <div className="nav">{NAV_GROUPS.map(([g,items])=>
+          <div key={g}>
+            <div className="group">{g}</div>
+            {items.map(([k,label])=>
+              <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{label}</button>)}
+          </div>)}</div>
       </div>
       <div className="main">
         <MasterBar master={master} setMaster={setMaster} />
-        <View master={master} />
+        <View master={master} nav={setTab} />
       </div>
     </div>
   );

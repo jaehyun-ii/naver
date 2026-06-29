@@ -66,11 +66,35 @@ class ExecutorError(RuntimeError):
     pass
 
 
+def _parse_loss_curve(stdout: str) -> list[dict]:
+    """학습 컨테이너 stdout의 `{'loss': X, ... 'epoch': Y}` 줄에서 step별 loss 추출(차트용)."""
+    import ast
+    import re
+
+    points: list[dict] = []
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if "'loss'" not in line or not line.startswith("{"):
+            continue
+        try:
+            d = ast.literal_eval(line)
+        except (ValueError, SyntaxError):
+            m = re.search(r"'loss':\s*([0-9.]+)", line)
+            if not m:
+                continue
+            d = {"loss": float(m.group(1))}
+        if isinstance(d, dict) and "loss" in d:
+            points.append({"step": len(points) + 1, "loss": round(float(d["loss"]), 4),
+                           "epoch": d.get("epoch")})
+    return points
+
+
 class RealExecutor:
     """docker CLI를 통해 실제 학습/병합/배포를 실행한다."""
 
     def __init__(self, cfg: ExecutorConfig | None = None) -> None:
         self.cfg = cfg or ExecutorConfig()
+        self.last_loss: list[dict] = []  # 직전 finetune의 step별 loss(차트용)
         Path(self.cfg.work_dir).mkdir(parents=True, exist_ok=True)
 
     # ── 내부 유틸 ──
@@ -120,7 +144,7 @@ class RealExecutor:
         method: str = "sft", use_dora: bool = False,
         max_steps: int = -1, epochs: float = 1.0,
     ) -> str:
-        """rows로 LoRA/DoRA 학습 → 어댑터 경로(호스트) 반환.
+        """rows로 LoRA/DoRA 학습 → 어댑터 경로(호스트) 반환. 학습 loss 곡선은 self.last_loss에 저장.
 
         method="sft": rows={"messages":[...]}; method="dpo": rows={"prompt","chosen","rejected"}.
         """
@@ -142,7 +166,8 @@ class RealExecutor:
         ]
         if use_dora:
             tail.append("--dora")
-        self._gpu_run(tail)
+        out = self._gpu_run(tail)
+        self.last_loss = _parse_loss_curve(out)  # 차트용 step별 loss
         if not (adapter_host / "adapter_config.json").exists():
             raise ExecutorError("학습은 끝났으나 어댑터 산출물이 없습니다")
         return str(adapter_host)
