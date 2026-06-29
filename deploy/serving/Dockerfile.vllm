@@ -1,0 +1,15 @@
+# vLLM 프로덕션 서빙 이미지 (H200 등 x86_64 + CUDA) — PagedAttention·연속배칭·Multi-LoRA.
+# 공식 이미지(vllm/vllm-openai)를 그대로 써도 되며, 버전 고정/커스터마이즈가 필요할 때 본 파일 사용.
+#
+# 주의: GB10(Blackwell aarch64 + CUDA13)에서는 vLLM 프리빌트가 가용하지 않아 transformers 백엔드를
+#       사용한다(개발). H200(x86_64)에서 본 백엔드를 활성: LLMOPS_EXEC__SERVE_BACKEND=vllm.
+FROM vllm/vllm-openai:latest
+
+# 서빙 모델은 컨테이너 실행 시 -v <merged>:/model 로 마운트.
+# entrypoint는 OpenAI 호환 api_server (동일 seam: /v1/chat/completions).
+# 실행 예:
+#   docker run --gpus '"device=0"' -v <merged>:/model -p 8000:8000 llmops/vllm:latest \
+#     --model /model --served-model-name hcx-seed-tuned --port 8000 \
+#     --gpu-memory-utilization 0.90 --max-model-len 4096
+#   # Multi-LoRA: --enable-lora --lora-modules t-a=/loras/a t-b=/loras/b
+EXPOSE 8000

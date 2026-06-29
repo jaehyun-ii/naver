@@ -1,0 +1,16 @@
+model_list:
+- model_name: hcx-seed-0_5b
+  litellm_params:
+    model: openai/hcx-seed-0_5b
+    api_base: http://host.docker.internal:8000/v1
+    api_key: dummy
+- model_name: hcx-seed-3b
+  litellm_params:
+    model: openai/hcx-seed-3b
+    api_base: http://localhost:8001/v1
+    api_key: dummy
+- model_name: hcx-seed-tuned
+  litellm_params:
+    model: openai/hcx-seed-tuned
+    api_base: http://host.docker.internal:8020/v1
+    api_key: dummy

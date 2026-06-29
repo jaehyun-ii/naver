@@ -1,0 +1,65 @@
+# 학습 파이프라인 트리거 — Argo Events (Service, 선언). design v3 §7.2 "무엇이 DAG를 발동하는가".
+# 새 데이터 버전 이벤트(웹훅)를 받으면 Sensor가 sft-train-eval-deploy WorkflowTemplate을 제출한다.
+# 발동 경로: 데이터셋 빌드 완료(data_build) → 웹훅 POST → EventSource → Sensor → Workflow.
+---
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: dataset-webhook
+  namespace: llmops
+spec:
+  service:
+    ports:
+      - port: 12000
+        targetPort: 12000
+  webhook:
+    # POST /dataset-ready  {"data_version": "...", "base_model": "...", "tenant": "..."}
+    dataset-ready:
+      endpoint: /dataset-ready
+      method: POST
+      port: "12000"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Sensor
+metadata:
+  name: retrain-on-dataset
+  namespace: llmops
+spec:
+  dependencies:
+    - name: dataset-dep
+      eventSourceName: dataset-webhook
+      eventName: dataset-ready
+  triggers:
+    - template:
+        name: submit-train-eval-deploy
+        argoWorkflow:
+          operation: submit
+          source:
+            resource:
+              apiVersion: argoproj.io/v1alpha1
+              kind: Workflow
+              metadata:
+                generateName: sft-
+                namespace: llmops
+              spec:
+                workflowTemplateRef:
+                  name: sft-train-eval-deploy
+                arguments:
+                  parameters:
+                    - { name: base-model }
+                    - { name: data-version }
+                    - { name: tenant }
+          # 웹훅 페이로드 → 워크플로우 파라미터 매핑
+          parameters:
+            - src:
+                dependencyName: dataset-dep
+                dataKey: body.data_version
+              dest: spec.arguments.parameters.1.value
+            - src:
+                dependencyName: dataset-dep
+                dataKey: body.base_model
+              dest: spec.arguments.parameters.0.value
+            - src:
+                dependencyName: dataset-dep
+                dataKey: body.tenant
+              dest: spec.arguments.parameters.2.value

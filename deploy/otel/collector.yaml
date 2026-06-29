@@ -1,0 +1,27 @@
+# OTel Collector — 코어가 보낸 LLM 스팬(자체 규약)을 수신해 Jaeger로 전달.
+# 옵션 B(자체 구축) 백본. 운영 시 exporter를 ClickHouse/Grafana Tempo로 교체 가능.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]

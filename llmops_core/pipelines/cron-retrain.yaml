@@ -1,0 +1,21 @@
+# 정기 재학습 트리거 — Argo CronWorkflow (Service, 선언).
+# 웹훅 이벤트(argo-events.yaml)와 별개로, 주기적으로 최신 데이터 버전으로 재학습한다.
+# design v3 §7.4 평가-재학습 루프의 스케줄 경로.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: nightly-retrain
+  namespace: llmops
+spec:
+  schedule: "0 18 * * *" # 매일 03:00 KST (UTC 18:00)
+  timezone: "UTC"
+  concurrencyPolicy: "Forbid" # 이전 실행 미완 시 중첩 금지
+  startingDeadlineSeconds: 3600
+  workflowSpec:
+    workflowTemplateRef:
+      name: sft-train-eval-deploy
+    arguments:
+      parameters:
+        - { name: base-model, value: "naver-hyperclovax/HyperCLOVAX-SEED-Text-Instruct-3B" }
+        - { name: data-version, value: "HEAD" }
+        - { name: tenant, value: "shared" }

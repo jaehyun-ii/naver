@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LLMOps 콘솔</title>
+  <!-- React 18 + Babel standalone — 로컬 동봉(vendor)으로 오프라인/내부망에서도 동작 -->
+  <script src="/vendor/react.production.min.js"></script>
+  <script src="/vendor/react-dom.production.min.js"></script>
+  <script src="/vendor/babel.min.js"></script>
+  <style>
+    :root { --bg:#0f1419; --panel:#1a2230; --panel2:#222d3d; --line:#2d3a4d; --fg:#e6edf3;
+            --muted:#8b9bb0; --accent:#4f9cf9; --ok:#3fb950; --warn:#d29922; --err:#f85149; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--fg); }
+    .app { display:flex; min-height:100vh; }
+    .side { width:220px; background:var(--panel); border-right:1px solid var(--line); padding:18px 0; }
+    .brand { font-weight:700; font-size:18px; padding:0 20px 16px; color:var(--accent); }
+    .nav button { display:block; width:100%; text-align:left; background:none; border:none; color:var(--muted);
+                  padding:11px 20px; font-size:14px; cursor:pointer; }
+    .nav button.active { background:var(--panel2); color:var(--fg); border-left:3px solid var(--accent); }
+    .main { flex:1; padding:24px 32px; max-width:1100px; }
+    h2 { margin:0 0 4px; font-size:20px; } .sub { color:var(--muted); font-size:13px; margin-bottom:20px; }
+    .bar { display:flex; gap:8px; align-items:center; margin-bottom:18px; flex-wrap:wrap; }
+    input, select, textarea { background:var(--panel2); border:1px solid var(--line); color:var(--fg);
+                              padding:8px 10px; border-radius:6px; font-size:13px; font-family:inherit; }
+    textarea { width:100%; min-height:110px; resize:vertical; }
+    button.btn { background:var(--accent); border:none; color:#04101f; padding:8px 14px; border-radius:6px;
+                 font-weight:600; cursor:pointer; font-size:13px; }
+    button.btn.ghost { background:var(--panel2); color:var(--fg); border:1px solid var(--line); }
+    button.btn.danger { background:var(--err); color:#fff; }
+    button.btn.ok { background:var(--ok); color:#04140a; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px; margin-bottom:16px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th,td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); }
+    th { color:var(--muted); font-weight:600; }
+    .pill { padding:2px 9px; border-radius:20px; font-size:11px; font-weight:600; }
+    .pill.Pending{background:#3a2f10;color:var(--warn);} .pill.Approved{background:#0f2e16;color:var(--ok);}
+    .pill.Rejected{background:#3a1414;color:var(--err);}
+    .msg { padding:10px 12px; border-radius:8px; margin-bottom:8px; font-size:14px; white-space:pre-wrap; }
+    .msg.user { background:var(--panel2); } .msg.assistant { background:#10261f; border:1px solid #1c4634; }
+    .err { color:var(--err); font-size:13px; } .muted { color:var(--muted); font-size:12px; }
+    .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+    .kv { font-size:12px; color:var(--muted); } .mono { font-family:ui-monospace,monospace; }
+    label.fld { display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+// ── API helper ──
+const api = async (path, { method = "GET", body, master } = {}) => {
+  const headers = { "Content-Type": "application/json" };
+  if (master) headers["X-Master-Key"] = master;
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data;
+};
+const parseJsonl = (txt) => txt.split("\n").map(l => l.trim()).filter(Boolean).map(l => JSON.parse(l));
+
+// ── Master key bar ──
+function MasterBar({ master, setMaster }) {
+  const [v, setV] = useState(master);
+  return (
+    <div className="bar">
+      <span className="muted">Master Key</span>
+      <input type="password" value={v} onChange={e => setV(e.target.value)} style={{width:260}}
+             placeholder="sk-master-changeme" />
+      <button className="btn ghost" onClick={() => { setMaster(v); localStorage.setItem("mk", v); }}>저장</button>
+      <span className="muted">{master ? "설정됨" : "관리 기능에 필요"}</span>
+    </div>
+  );
+}
+
+// ── Playground ──
+function Playground({ master }) {
+  const [models, setModels] = useState([]);
+  const [model, setModel] = useState("");
+  const [vkey, setVkey] = useState(localStorage.getItem("vk") || "");
+  const [input, setInput] = useState("안녕하세요");
+  const [msgs, setMsgs] = useState([]);
+  const [err, setErr] = useState("");
+  const [last, setLast] = useState(null);
+
+  useEffect(() => { if (master) api("/api/models", { master }).then(d => { setModels(d.models); setModel(d.models[0] || ""); }).catch(()=>{}); }, [master]);
+
+  const send = async () => {
+    setErr("");
+    const next = [...msgs, { role: "user", content: input }];
+    setMsgs(next); setInput("");
+    try {
+      localStorage.setItem("vk", vkey);
+      const r = await api("/api/chat", { method:"POST", body:{ virtual_key:vkey, model, messages:next } });
+      setMsgs([...next, { role:"assistant", content:r.content }]);
+      setLast(r);
+    } catch (e) { setErr(e.message); }
+  };
+
+  return (
+    <div>
+      <h2>챗 플레이그라운드</h2>
+      <div className="sub">가상키 인증 → 정책(화이트리스트/RPM/예산) 적용 → 백엔드 호출. 모델 미연결 시 echo 백엔드로 동작.</div>
+      <div className="card">
+        <div className="bar">
+          <input value={vkey} onChange={e=>setVkey(e.target.value)} placeholder="가상키 sk-..." style={{width:280}} />
+          <select value={model} onChange={e=>setModel(e.target.value)}>
+            {models.length ? models.map(m => <option key={m}>{m}</option>) : <option value="">(모델 로드: master key 필요)</option>}
+          </select>
+        </div>
+        {msgs.map((m,i) => <div key={i} className={"msg "+m.role}><b className="muted">{m.role}</b>{"\n"}{m.content}</div>)}
+        {err && <div className="err">⚠ {err}</div>}
+        <div className="bar" style={{marginTop:10}}>
+          <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()}
+                 placeholder="메시지" style={{flex:1}} />
+          <button className="btn" onClick={send} disabled={!vkey||!model}>보내기</button>
+        </div>
+        {last && <div className="kv">backend=<b>{last.backend}</b> · tokens={last.usage.total_tokens||0} · cost=${last.cost_usd}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ── Keys ──
+function Keys({ master }) {
+  const [keys, setKeys] = useState([]); const [err, setErr] = useState(""); const [issued, setIssued] = useState(null);
+  const [f, setF] = useState({ tenant_id:"", allowed_models:"", monthly_budget_usd:"", rpm_limit:"" });
+  const load = useCallback(() => api("/api/keys",{master}).then(setKeys).catch(e=>setErr(e.message)), [master]);
+  useEffect(() => { if (master) load(); }, [master, load]);
+
+  const issue = async () => {
+    setErr("");
+    try {
+      const body = { tenant_id:f.tenant_id,
+        allowed_models: f.allowed_models ? f.allowed_models.split(",").map(s=>s.trim()).filter(Boolean) : [],
+        monthly_budget_usd: f.monthly_budget_usd ? Number(f.monthly_budget_usd) : null,
+        rpm_limit: f.rpm_limit ? Number(f.rpm_limit) : null };
+      const r = await api("/api/keys",{method:"POST",master,body});
+      setIssued(r); load();
+    } catch(e){ setErr(e.message); }
+  };
+  const revoke = async (id) => { await api("/api/keys/"+id,{method:"DELETE",master}); load(); };
+
+  return (
+    <div>
+      <h2>운영 콘솔 — 가상키 · 예산 · 모델</h2>
+      <div className="sub">테넌트별 가상키 발급, 모델 화이트리스트, 월 예산·RPM 제한, 사용량 조회.</div>
+      <div className="card">
+        <b>키 발급</b>
+        <div className="grid2" style={{marginTop:10}}>
+          <label className="fld">테넌트 ID<input value={f.tenant_id} onChange={e=>setF({...f,tenant_id:e.target.value})}/></label>
+          <label className="fld">허용 모델(쉼표)<input value={f.allowed_models} onChange={e=>setF({...f,allowed_models:e.target.value})} placeholder="hcx-seed-3b"/></label>
+          <label className="fld">월 예산 USD<input value={f.monthly_budget_usd} onChange={e=>setF({...f,monthly_budget_usd:e.target.value})} placeholder="비우면 무제한"/></label>
+          <label className="fld">RPM 제한<input value={f.rpm_limit} onChange={e=>setF({...f,rpm_limit:e.target.value})} placeholder="비우면 무제한"/></label>
+        </div>
+        <div className="bar" style={{marginTop:12}}><button className="btn" onClick={issue} disabled={!f.tenant_id||!master}>발급</button></div>
+        {issued && <div className="kv">발급됨(1회 노출): <span className="mono" style={{color:"var(--ok)"}}>{issued.virtual_key}</span></div>}
+        {err && <div className="err">⚠ {err}</div>}
+      </div>
+      <div className="card">
+        <table><thead><tr><th>key_id</th><th>테넌트</th><th>허용모델</th><th>예산</th><th>RPM</th><th>사용액</th><th></th></tr></thead>
+        <tbody>{keys.map(k => <tr key={k.key_id}>
+          <td className="mono">{k.key_id}</td><td>{k.tenant_id}</td>
+          <td>{k.allowed_models.join(", ")||"전체"}</td>
+          <td>{k.monthly_budget_usd ?? "∞"}</td><td>{k.rpm_limit ?? "∞"}</td>
+          <td>${k.spent_usd}</td>
+          <td><button className="btn danger" onClick={()=>revoke(k.key_id)}>폐기</button></td>
+        </tr>)}{!keys.length && <tr><td colSpan="7" className="muted">키 없음</td></tr>}</tbody></table>
+      </div>
+    </div>
+  );
+}
+
+// ── Releases ──
+function Releases({ master }) {
+  const [list, setList] = useState([]); const [err, setErr] = useState("");
+  const [f, setF] = useState({ model_ref:"hcx-seed-3b", faithfulness:"0.9", passed:true });
+  const load = useCallback(() => api("/api/releases",{master}).then(setList).catch(e=>setErr(e.message)), [master]);
+  useEffect(()=>{ if(master) load(); },[master,load]);
+  const create = async () => { setErr("");
+    try { await api("/api/releases",{method:"POST",master,body:{ model_ref:f.model_ref, passed:f.passed,
+      metrics:{ faithfulness:Number(f.faithfulness) } }}); load(); } catch(e){ setErr(e.message); } };
+  const decide = async (id,kind) => {
+    const approver = prompt("승인자 이름?","operator"); if(!approver) return;
+    const reason = kind==="reject" ? prompt("반려 사유?","")||"" : null;
+    await api(`/api/releases/${id}/${kind}`,{method:"POST",master,body:{approver,reason}}); load();
+  };
+  return (
+    <div>
+      <h2>승인 · 평가 대시보드</h2>
+      <div className="sub">Release Gateway 2차 거버넌스 — 자동 평가 게이트 통과분만 승인 요청 가능. 승인/반려로 배포 통제.</div>
+      <div className="card">
+        <b>승인 요청 생성 (데모)</b>
+        <div className="bar" style={{marginTop:10}}>
+          <input value={f.model_ref} onChange={e=>setF({...f,model_ref:e.target.value})} placeholder="model_ref"/>
+          <input value={f.faithfulness} onChange={e=>setF({...f,faithfulness:e.target.value})} style={{width:120}} placeholder="faithfulness"/>
+          <label className="muted"><input type="checkbox" checked={f.passed} onChange={e=>setF({...f,passed:e.target.checked})}/> 자동게이트 통과</label>
+          <button className="btn" onClick={create} disabled={!master}>요청 생성</button>
+        </div>
+        {err && <div className="err">⚠ {err}</div>}
+      </div>
+      <div className="card">
+        <table><thead><tr><th>ID</th><th>모델</th><th>메트릭</th><th>상태</th><th>승인자</th><th></th></tr></thead>
+        <tbody>{list.map(r => <tr key={r.id}>
+          <td className="mono">{r.id}</td><td>{r.model_ref}</td>
+          <td className="kv">{Object.entries(r.metrics||{}).map(([k,v])=>`${k}=${v}`).join(", ")}</td>
+          <td><span className={"pill "+r.status}>{r.status}</span></td>
+          <td>{r.approver||"-"}{r.reason?` (${r.reason})`:""}</td>
+          <td>{r.status==="Pending" && <span>
+            <button className="btn ok" onClick={()=>decide(r.id,"approve")}>승인</button>{" "}
+            <button className="btn danger" onClick={()=>decide(r.id,"reject")}>반려</button>
+          </span>}</td>
+        </tr>)}{!list.length && <tr><td colSpan="6" className="muted">요청 없음</td></tr>}</tbody></table>
+      </div>
+    </div>
+  );
+}
+
+// ── Data ──
+function Data({ master }) {
+  const [recs, setRecs] = useState('{"id":"1","text":"환불 정책은 14일 이내 전액 환불입니다"}\n{"id":"2","text":"배송은 평일 2~3일 소요됩니다"}');
+  const [report, setReport] = useState(null);
+  const [labeled, setLabeled] = useState('{"text":"환불 정책?","response":"14일 이내 전액 환불"}\n{"text":"배송 기간?","response":"평일 2~3일"}');
+  const [manifest, setManifest] = useState(null);
+  const [sets, setSets] = useState([]); const [err, setErr] = useState("");
+  const loadSets = useCallback(()=>api("/api/data/datasets",{master}).then(setSets).catch(()=>{}),[master]);
+  useEffect(()=>{ if(master) loadSets(); },[master,loadSets]);
+
+  const validate = async () => { setErr("");
+    try { setReport(await api("/api/data/validate",{method:"POST",master,body:{records:parseJsonl(recs)}})); }
+    catch(e){ setErr(e.message); } };
+  const build = async () => { setErr("");
+    try { const m = await api("/api/data/build",{method:"POST",master,body:{name:"console-sft",labeled:parseJsonl(labeled)}});
+      setManifest(m); loadSets(); } catch(e){ setErr(e.message); } };
+
+  return (
+    <div>
+      <h2>데이터 · 데이터셋 관리</h2>
+      <div className="sub">L2 품질 검증(길이/중복/언어 게이트) + L3 SFT 데이터셋 빌드(결정적 분할 · 핑거프린트 버전).</div>
+      {err && <div className="err">⚠ {err}</div>}
+      <div className="grid2">
+        <div className="card">
+          <b>품질 검증 (TextRecord JSONL)</b>
+          <textarea value={recs} onChange={e=>setRecs(e.target.value)} />
+          <div className="bar"><button className="btn" onClick={validate} disabled={!master}>검증</button></div>
+          {report && <div>
+            <span className={"pill "+(report.passed?"Approved":"Rejected")}>{report.passed?"통과":"미달"}</span>
+            <div className="kv">records={report.num_records} · dup_ratio={report.stats.dup_ratio}</div>
+            {Object.entries(report.failures||{}).map(([k,v])=><div key={k} className="err">{k}: {v}</div>)}
+          </div>}
+        </div>
+        <div className="card">
+          <b>SFT 데이터셋 빌드 ({"{text,response}"} JSONL)</b>
+          <textarea value={labeled} onChange={e=>setLabeled(e.target.value)} />
+          <div className="bar"><button className="btn" onClick={build} disabled={!master}>빌드</button></div>
+          {manifest && <div className="kv">fingerprint=<span className="mono">{manifest.fingerprint.slice(0,16)}…</span>{" "}
+            train/val/test = {manifest.num_train}/{manifest.num_val}/{manifest.num_test}</div>}
+        </div>
+      </div>
+      <div className="card">
+        <b>데이터셋 버전</b>
+        <table><thead><tr><th>이름</th><th>종류</th><th>fingerprint</th><th>train/val/test</th></tr></thead>
+        <tbody>{sets.map((s,i)=><tr key={i}><td>{s.name}</td><td>{s.kind}</td>
+          <td className="mono">{s.fingerprint.slice(0,16)}…</td>
+          <td>{s.num_train}/{s.num_val}/{s.num_test}</td></tr>)}
+          {!sets.length && <tr><td colSpan="4" className="muted">없음</td></tr>}</tbody></table>
+      </div>
+    </div>
+  );
+}
+
+// ── Pipeline (업로드→학습→평가→승인→배포 e2e) ──
+const STAGE_CLR = { succeeded:"var(--ok)", failed:"var(--err)", running:"var(--accent)",
+                    waiting:"var(--warn)", skipped:"var(--muted)", pending:"var(--muted)" };
+const SFT_SAMPLE = '{"text":"선급증서 유효기간이 지나면?","response":"즉시 선급기관에 재검사를 신청해 갱신합니다."}\n{"text":"FAT 불합격 시 절차는?","response":"부적합 항목을 시정조치 요구서로 발행하고 재시험합니다."}\n{"text":"재료증명서가 없으면?","response":"공급사에 제출을 요구하고 미제출 시 입고를 보류합니다."}';
+const DPO_SAMPLE = '{"prompt":"선급증서 유효기간이 지나면?","chosen":"즉시 선급기관에 재검사를 신청해 갱신합니다.","rejected":"그냥 둬도 됩니다."}\n{"prompt":"FAT 불합격 시 절차는?","chosen":"부적합 항목을 시정조치 요구서로 발행하고 재시험합니다.","rejected":"무시하고 출하합니다."}';
+function Pipeline({ master }) {
+  const [method, setMethod] = useState("sft");   // sft(Instruction) | dpo(Preference)
+  const [pet, setPet] = useState("lora");        // lora | dora
+  const [data, setData] = useState(SFT_SAMPLE);
+  const [mode, setMode] = useState("real");
+  const [steps, setSteps] = useState(20);
+  const [servedName, setServedName] = useState("hcx-seed-tuned");
+  const [run, setRun] = useState(null);
+  const [err, setErr] = useState("");
+
+  // method 전환 시 입력 샘플도 전환(사용자가 안 건드렸을 때만 편의 제공)
+  const switchMethod = (m) => {
+    setMethod(m);
+    if (data === SFT_SAMPLE || data === DPO_SAMPLE || !data.trim())
+      setData(m === "dpo" ? DPO_SAMPLE : SFT_SAMPLE);
+  };
+  const onFile = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const r = new FileReader();
+    r.onload = () => setData(String(r.result).trim());
+    r.readAsText(file);
+  };
+
+  const start = async () => {
+    setErr(""); setRun(null);
+    let rows;
+    try { rows = parseJsonl(data); }
+    catch(e){ setErr("JSONL 파싱 실패: "+e.message); return; }
+    const body = { name:"console-e2e", mode, method, pet, served_name:servedName,
+                   train_max_steps:Number(steps) };
+    if (method === "dpo") body.preference = rows; else body.labeled = rows;
+    try {
+      setRun(await api("/api/pipeline/run", { method:"POST", master, body }));
+    } catch(e){ setErr(e.message); }
+  };
+  const approve = async () => {
+    try {
+      await api(`/api/releases/${run.release_id}/approve`, { method:"POST", master,
+        body:{ approver:"console" } });
+      const r = await api(`/api/pipeline/runs/${run.id}/resume`, { method:"POST", master });
+      setRun(r);
+    } catch(e){ setErr(e.message); }
+  };
+  const reject = async () => {
+    try {
+      await api(`/api/releases/${run.release_id}/reject`, { method:"POST", master,
+        body:{ approver:"console", reason:"console 반려" } });
+      const r = await api(`/api/pipeline/runs/${run.id}/resume`, { method:"POST", master });
+      setRun(r);
+    } catch(e){ setErr(e.message); }
+  };
+
+  // running/post-running 동안 폴링
+  useEffect(() => {
+    if (!run) return;
+    if (!["running","post-running"].includes(run.status)) return;
+    const t = setInterval(async () => {
+      try { setRun(await api(`/api/pipeline/runs/${run.id}`, { master })); } catch(e){}
+    }, 2000);
+    return () => clearInterval(t);
+  }, [run, master]);
+
+  const busy = run && ["running","post-running"].includes(run.status);
+  return (
+    <div>
+      <h2>파이프라인 — 업로드→학습→평가→승인→배포</h2>
+      <div className="sub">데이터 적재·품질·빌드·평가·승인은 실제 실행. <b>real</b> 모드는 GB10에서 SEED-0.5B LoRA 학습·병합·서빙 교체까지 docker로 실제 수행(분 단위, 백그라운드).</div>
+      {err && <div className="err">⚠ {err}</div>}
+      <div className="card">
+        <div className="bar">
+          <label className="muted">데이터 유형
+            <select value={method} onChange={e=>switchMethod(e.target.value)} style={{marginLeft:6}}>
+              <option value="sft">Instruction (SFT)</option>
+              <option value="dpo">Preference (DPO)</option>
+            </select>
+          </label>
+          <label className="muted">PET
+            <select value={pet} onChange={e=>setPet(e.target.value)} style={{marginLeft:6}}>
+              <option value="lora">LoRA</option>
+              <option value="dora">DoRA</option>
+            </select>
+          </label>
+        </div>
+        <b>학습 데이터 ({method === "dpo" ? "{prompt,chosen,rejected}" : "{text,response}"} JSONL · DB 조회분 가정)</b>
+        <div className="bar" style={{marginTop:8}}>
+          <input type="file" accept=".jsonl,.json,.txt" onChange={onFile} />
+          <span className="muted">또는 아래에 직접 붙여넣기</span>
+        </div>
+        <textarea value={data} onChange={e=>setData(e.target.value)} />
+        <div className="bar" style={{marginTop:10}}>
+          <label className="muted">모드
+            <select value={mode} onChange={e=>setMode(e.target.value)} style={{marginLeft:6}}>
+              <option value="real">real (GB10 실학습)</option>
+              <option value="sim">sim (모의)</option>
+            </select>
+          </label>
+          <label className="muted">max_steps
+            <input value={steps} onChange={e=>setSteps(e.target.value)} style={{width:70,marginLeft:6}} />
+          </label>
+          <label className="muted">배포 모델명
+            <input value={servedName} onChange={e=>setServedName(e.target.value)} style={{width:150,marginLeft:6}} />
+          </label>
+          <button className="btn" onClick={start} disabled={!master||busy}>
+            {busy ? "실행 중…" : "파이프라인 실행"}</button>
+        </div>
+      </div>
+
+      {run && <div className="card">
+        <div className="bar">
+          <b>{run.id}</b>
+          <span className="pill" style={{background:"#10261f", color:STAGE_CLR[run.status]||"var(--fg)"}}>{run.status}</span>
+          <span className="muted">mode={run.mode}</span>
+          {run.status==="waiting" && <span>
+            <button className="btn ok" onClick={approve}>승인 → 배포</button>{" "}
+            <button className="btn danger" onClick={reject}>반려</button>
+          </span>}
+        </div>
+        <table><thead><tr><th>단계</th><th>종류</th><th>상태</th><th>상세</th></tr></thead>
+        <tbody>{run.stages.map(s => <tr key={s.name}>
+          <td>{s.title}</td>
+          <td><span className="kv">{s.kind}</span></td>
+          <td><b style={{color:STAGE_CLR[s.status]||"var(--fg)"}}>{s.status}</b></td>
+          <td className="kv">{s.detail}</td>
+        </tr>)}</tbody></table>
+        {run.artifacts && Object.keys(run.artifacts).length>0 && <div className="kv" style={{marginTop:8}}>
+          {Object.entries(run.artifacts).map(([k,v])=><div key={k}><b>{k}</b>: <span className="mono">{v}</span></div>)}
+        </div>}
+        {run.status==="succeeded" && run.mode==="real" && <div className="muted" style={{marginTop:8}}>
+          배포 완료 → 챗 플레이그라운드에서 <span className="mono">{run.artifacts.served_name}</span> 모델로 호출해 보세요.</div>}
+      </div>}
+    </div>
+  );
+}
+
+// ── Dashboard (인프라·GPU·온프렘/NCP 하이브리드·최적화) ──
+function Dashboard({ master }) {
+  const [d, setD] = useState(null); const [err, setErr] = useState("");
+  const load = useCallback(()=>api("/api/infra",{master}).then(setD).catch(e=>setErr(e.message)),[master]);
+  useEffect(()=>{ if(master){ load(); const t=setInterval(load,5000); return ()=>clearInterval(t);} },[master,load]);
+  if (!d) return <div><h2>대시보드</h2><div className="sub">{err?<span className="err">⚠ {err}</span>:"master key 입력 필요"}</div></div>;
+  return (
+    <div>
+      <h2>대시보드 — 인프라 · GPU · 하이브리드</h2>
+      <div className="sub">온프레미스-NCP 하이브리드 GPU 학습·운영 + GPU 자원 최적화 현황.</div>
+      <div className="grid2">
+        <div className="card">
+          <b>GPU 자원</b>
+          {d.gpus.length ? <table><thead><tr><th>GPU</th><th>메모리</th><th>사용률</th><th>온도</th></tr></thead>
+            <tbody>{d.gpus.map((g,i)=><tr key={i}><td>{g.name}</td>
+              <td>{g.mem_used_mb}/{g.mem_total_mb}MB</td><td>{g.util_pct}%</td><td>{g.temp_c}°C</td></tr>)}</tbody></table>
+            : <div className="muted">GPU 미감지</div>}
+        </div>
+        <div className="card">
+          <b>GPU 스케줄러 (노드·디바이스 풀)</b>
+          {d.scheduler && d.scheduler.length ? <table><thead><tr><th>노드</th><th>호스트</th><th>점유/전체</th></tr></thead>
+            <tbody>{d.scheduler.map((n,i)=><tr key={i}><td>{n.node}</td>
+              <td className="kv mono">{n.docker_host}</td>
+              <td><b style={{color:n.busy?"var(--warn)":"var(--ok)"}}>{n.busy}</b>/{n.total} (여유 {n.free})</td></tr>)}</tbody></table>
+            : <div className="muted">스케줄러 미구성</div>}
+          <div className="muted" style={{marginTop:6}}>잡은 비어있는 디바이스에 핀닝(device=N) · H200×8 또는 4+4 노드 config로 확장</div>
+        </div>
+        <div className="card">
+          <b>스토리지 (온프렘 ↔ NCP 하이브리드)</b>
+          <div className="bar" style={{marginTop:8}}>
+            {d.storage.hybrid_options.map(o=>
+              <span key={o} className="pill" style={{background:o===d.storage.provider?"#0f2e16":"var(--panel2)",
+                color:o===d.storage.provider?"var(--ok)":"var(--muted)"}}>{o}{o===d.storage.provider?" (활성)":""}</span>)}
+          </div>
+          <div className="kv" style={{marginTop:6}}>endpoint: <span className="mono">{d.storage.endpoint}</span></div>
+          <div className="muted" style={{marginTop:6}}>전환: <span className="mono">LLMOPS_S3__PROVIDER=ncp</span> (코드 동일, 엔드포인트만 교체)</div>
+        </div>
+      </div>
+      <div className="card">
+        <b>GPU 최적화</b>
+        <div className="bar" style={{marginTop:8}}>
+          <span className="pill" style={{background:"var(--panel2)"}}>precision: {d.optimization.precision}</span>
+          {d.optimization.pet.map(p=><span key={p} className="pill" style={{background:"var(--panel2)"}}>PET: {p}</span>)}
+          <span className="pill" style={{background:"var(--panel2)"}}>multi-LoRA 서빙</span>
+          <span className="pill" style={{background:"var(--panel2)"}}>micro-batching</span>
+        </div>
+        <div className="muted" style={{marginTop:6}}>처리량 상한: {d.optimization.throughput_path}</div>
+      </div>
+      <div className="card">
+        <b>서비스 상태 ({d.services.length})</b>
+        <table><tbody>{d.services.map((s,i)=><tr key={i}><td className="mono">{s.name}</td>
+          <td className="kv">{s.status}</td></tr>)}{!d.services.length&&<tr><td className="muted">컨테이너 미감지</td></tr>}</tbody></table>
+      </div>
+    </div>
+  );
+}
+
+// ── HPO (모델 학습 파라미터 최적화) ──
+function HPO({ master }) {
+  const [labeled, setLabeled] = useState('{"text":"환불 정책?","response":"14일 이내 전액 환불"}\n{"text":"배송 기간?","response":"평일 2~3일"}');
+  const [mode, setMode] = useState("sim"); const [trials, setTrials] = useState(4);
+  const [run, setRun] = useState(null); const [err, setErr] = useState("");
+  const start = async () => { setErr("");
+    let rows; try { rows = parseJsonl(labeled);} catch(e){ setErr("JSONL 오류: "+e.message); return; }
+    try { setRun(await api("/api/tuning/hpo",{method:"POST",master,body:{mode,labeled:rows,trials:Number(trials)}})); }
+    catch(e){ setErr(e.message); } };
+  useEffect(()=>{ if(!run||run.status!=="running")return;
+    const t=setInterval(async()=>{ try{ setRun(await api(`/api/tuning/hpo/${run.id}`,{master})); }catch(e){} },2000);
+    return ()=>clearInterval(t); },[run,master]);
+  return (
+    <div>
+      <h2>HPO — 모델 학습 파라미터 최적화</h2>
+      <div className="sub">Optuna(TPE) 탐색. 각 trial = 짧은 SFT + 평가. <b>real</b>은 GB10에서 실제 학습(분 단위).</div>
+      {err&&<div className="err">⚠ {err}</div>}
+      <div className="card">
+        <b>학습 데이터 ({"{text,response}"})</b>
+        <textarea value={labeled} onChange={e=>setLabeled(e.target.value)} />
+        <div className="bar" style={{marginTop:8}}>
+          <label className="muted">모드<select value={mode} onChange={e=>setMode(e.target.value)} style={{marginLeft:6}}>
+            <option value="sim">sim (즉시)</option><option value="real">real (GB10)</option></select></label>
+          <label className="muted">trials<input value={trials} onChange={e=>setTrials(e.target.value)} style={{width:60,marginLeft:6}}/></label>
+          <button className="btn" onClick={start} disabled={!master||(run&&run.status==="running")}>{run&&run.status==="running"?"탐색 중…":"HPO 시작"}</button>
+        </div>
+      </div>
+      {run&&<div className="card">
+        <div className="bar"><b>{run.id}</b><span className="pill" style={{background:"#10261f",color:STAGE_CLR[run.status]||"var(--fg)"}}>{run.status}</span></div>
+        {run.best_params&&<div className="kv">최적: <span className="mono">{JSON.stringify(run.best_params)}</span> · score={run.best_value}</div>}
+        {run.trials&&run.trials.length>0&&<table><thead><tr><th>trial</th><th>lr</th><th>r</th><th>alpha</th><th>score</th></tr></thead>
+          <tbody>{run.trials.map((t,i)=><tr key={i}><td>{t.trial}</td><td>{t.params.learning_rate}</td>
+            <td>{t.params.lora_r}</td><td>{t.params.lora_alpha}</td><td><b>{t.score}</b></td></tr>)}</tbody></table>}
+      </div>}
+    </div>
+  );
+}
+
+// ── Prompts (프롬프트 엔지니어링 체계) ──
+function Prompts({ master }) {
+  const [list, setList] = useState([]); const [name, setName] = useState("qa-system");
+  const [tpl, setTpl] = useState("간결하고 정확하게 한 문장으로 답하라."); const [err, setErr] = useState("");
+  const [variants, setVariants] = useState("간결하고 정확하게 한 문장으로 답하라.\n친절하고 상세하게 단계별로 설명하라.");
+  const [cmp, setCmp] = useState(null);
+  const load = useCallback(()=>api("/api/prompts",{master}).then(setList).catch(e=>setErr(e.message)),[master]);
+  useEffect(()=>{ if(master) load(); },[master,load]);
+  const createV = async()=>{ setErr(""); try{ await api("/api/prompts/version",{method:"POST",master,body:{name,template:tpl}}); load(); }catch(e){setErr(e.message);} };
+  const promote = async(n,v)=>{ try{ await api("/api/prompts/promote",{method:"POST",master,body:{name:n,version:v,label:"prod"}}); load(); }catch(e){setErr(e.message);} };
+  const compare = async()=>{ setErr(""); try{ setCmp(await api("/api/prompts/compare",{method:"POST",master,body:{variants:variants.split("\n").map(s=>s.trim()).filter(Boolean)}})); }catch(e){setErr(e.message);} };
+  return (
+    <div>
+      <h2>프롬프트 엔지니어링 체계</h2>
+      <div className="sub">프롬프트를 버전 자산으로 관리 — 불변 버전 · 라벨(prod/stg) · 롤백 · 변형 비교.</div>
+      {err&&<div className="err">⚠ {err}</div>}
+      <div className="grid2">
+        <div className="card">
+          <b>버전 생성</b>
+          <div className="bar" style={{marginTop:8}}><input value={name} onChange={e=>setName(e.target.value)} placeholder="이름" style={{width:160}}/></div>
+          <textarea value={tpl} onChange={e=>setTpl(e.target.value)} />
+          <div className="bar"><button className="btn" onClick={createV} disabled={!master}>버전 추가</button></div>
+        </div>
+        <div className="card">
+          <b>변형 비교 (즉시 휴리스틱)</b>
+          <textarea value={variants} onChange={e=>setVariants(e.target.value)} />
+          <div className="bar"><button className="btn" onClick={compare} disabled={!master}>비교</button></div>
+          {cmp&&<div><div className="kv">최우수: <b style={{color:"var(--ok)"}}>{cmp.best}</b></div>
+            {cmp.results.map((r,i)=><div key={i} className="kv">{r.score} · {r.variant.slice(0,40)}</div>)}</div>}
+        </div>
+      </div>
+      <div className="card">
+        <b>프롬프트 레지스트리</b>
+        <table><thead><tr><th>이름</th><th>버전</th><th>라벨</th><th>승격</th></tr></thead>
+        <tbody>{list.map((p,i)=><tr key={i}><td className="mono">{p.name}</td><td>{p.versions.join(", ")}</td>
+          <td className="kv">{Object.entries(p.labels).map(([l,v])=>`${l}→v${v}`).join(", ")||"-"}</td>
+          <td>{p.versions.map(v=><button key={v} className="btn ghost" style={{marginRight:4,padding:"2px 8px"}} onClick={()=>promote(p.name,v)}>v{v}→prod</button>)}</td>
+        </tr>)}{!list.length&&<tr><td colSpan="4" className="muted">없음</td></tr>}</tbody></table>
+      </div>
+    </div>
+  );
+}
+
+// ── EvalVersions (학습 데이터 버전별 성능평가) ──
+function EvalVersions({ master }) {
+  const [groups, setGroups] = useState([]); const [err, setErr] = useState("");
+  const load = useCallback(()=>api("/api/evaluation/by-version",{master}).then(setGroups).catch(e=>setErr(e.message)),[master]);
+  useEffect(()=>{ if(master) load(); },[master,load]);
+  return (
+    <div>
+      <h2>학습 데이터 버전별 성능평가</h2>
+      <div className="sub">데이터 버전(fingerprint)별로 학습·평가 결과를 모아 비교. 같은/다른 데이터 버전의 모델 성능 추적.</div>
+      {err&&<div className="err">⚠ {err}</div>}
+      <div className="bar"><button className="btn ghost" onClick={load} disabled={!master}>새로고침</button></div>
+      {groups.map((g,i)=><div className="card" key={i}>
+        <div className="bar"><b className="mono">{g.fingerprint.slice(0,16)}…</b>
+          <span className="muted">runs={g.num_runs}</span>
+          {g.best_score!=null&&<span className="pill" style={{background:"#0f2e16",color:"var(--ok)"}}>best={g.best_score}</span>}</div>
+        <table><thead><tr><th>run</th><th>모드</th><th>상태</th><th>메트릭</th></tr></thead>
+        <tbody>{g.runs.map((r,j)=><tr key={j}><td className="mono">{r.run_id}</td><td>{r.mode}</td>
+          <td><b style={{color:STAGE_CLR[r.status]||"var(--fg)"}}>{r.status}</b></td>
+          <td className="kv">{Object.entries(r.metrics).map(([k,v])=>`${k}=${v}`).join(", ")||"-"}</td></tr>)}</tbody></table>
+      </div>)}
+      {!groups.length&&<div className="card muted">아직 데이터 버전 기록이 없습니다. 파이프라인을 실행하세요.</div>}
+    </div>
+  );
+}
+
+// ── Drift (입력 데이터 드리프트 탐지) ──
+function Drift({ master }) {
+  const [name, setName] = useState("ship-qa");
+  const [refTxt, setRefTxt] = useState("선급증서 유효기간이 지나면 재검사를 신청한다.\n공장인수시험 불합격 시 시정조치 요구서를 발행한다.\n재료증명서가 없으면 입고를 보류한다.");
+  const [curTxt, setCurTxt] = useState("선급 규칙에 따라 검사 보고서를 제출한다.\n도면 승인 의견서를 검토한다.");
+  const [baselines, setBaselines] = useState([]); const [rep, setRep] = useState(null); const [err, setErr] = useState("");
+  const lines = (s)=>s.split("\n").map(x=>x.trim()).filter(Boolean);
+  const load = useCallback(()=>api("/api/drift/baselines",{master}).then(setBaselines).catch(()=>{}),[master]);
+  useEffect(()=>{ if(master) load(); },[master,load]);
+  const setBase = async()=>{ setErr("");
+    try{ await api("/api/drift/baseline",{method:"POST",master,body:{name,texts:lines(refTxt)}}); load(); }catch(e){setErr(e.message);} };
+  const check = async()=>{ setErr(""); setRep(null);
+    try{ setRep(await api("/api/drift/check",{method:"POST",master,body:{name,texts:lines(curTxt)}})); }catch(e){setErr(e.message);} };
+  return (
+    <div>
+      <h2>드리프트 탐지 — 입력 분포 변화</h2>
+      <div className="sub">학습/기준 데이터 분포를 기준선으로 등록하고 라이브·평가 텍스트의 분포 변화를 PSI/JS로 탐지. judge·GPU 불필요.</div>
+      {err&&<div className="err">⚠ {err}</div>}
+      <div className="bar"><label className="muted">기준선명<input value={name} onChange={e=>setName(e.target.value)} style={{marginLeft:6,width:160}}/></label></div>
+      <div className="grid2">
+        <div className="card"><b>기준선 데이터(학습 분포)</b>
+          <textarea value={refTxt} onChange={e=>setRefTxt(e.target.value)} />
+          <div className="bar"><button className="btn" onClick={setBase} disabled={!master}>기준선 등록</button></div></div>
+        <div className="card"><b>현재 데이터(라이브/평가)</b>
+          <textarea value={curTxt} onChange={e=>setCurTxt(e.target.value)} />
+          <div className="bar"><button className="btn" onClick={check} disabled={!master}>드리프트 검사</button></div></div>
+      </div>
+      {rep&&<div className="card">
+        <div className="bar"><b>{rep.name}</b>
+          <span className="pill" style={{background:rep.drift?"#3a1414":"#0f2e16",color:rep.drift?"var(--err)":"var(--ok)"}}>{rep.drift?"드리프트 감지":"안정"}</span>
+          <span className="muted">ref={rep.n_reference} · cur={rep.n_current}</span></div>
+        <table><thead><tr><th>지표</th><th>점수</th><th>임계</th><th>판정</th></tr></thead>
+        <tbody>{Object.entries(rep.scores).map(([k,v])=><tr key={k}><td>{k}</td><td><b>{v}</b></td>
+          <td className="kv">{rep.thresholds[k]}</td>
+          <td style={{color:v>rep.thresholds[k]?"var(--err)":"var(--ok)"}}>{v>rep.thresholds[k]?"초과":"정상"}</td></tr>)}</tbody></table>
+      </div>}
+      <div className="card"><b>기준선 목록</b>
+        <table><thead><tr><th>이름</th><th>건수</th><th>평균길이</th></tr></thead>
+        <tbody>{baselines.map((b,i)=><tr key={i}><td className="mono">{b.name}</td><td>{b.n}</td><td>{b.avg_len}</td></tr>)}
+          {!baselines.length&&<tr><td colSpan="3" className="muted">없음</td></tr>}</tbody></table></div>
+    </div>
+  );
+}
+
+// ── App shell ──
+const TABS = [
+  ["dash","대시보드 · 인프라/GPU"],
+  ["data","데이터셋"],
+  ["pipe","파이프라인 · 학습/평가/배포"],
+  ["hpo","HPO 파라미터 최적화"],
+  ["prompt","프롬프트 엔지니어링"],
+  ["evalv","데이터 버전별 성능"],
+  ["drift","드리프트 탐지"],
+  ["keys","테넌트 정책 · 키"],
+  ["rel","승인·평가"],
+  ["play","플레이그라운드"],
+];
+function App() {
+  const [tab, setTab] = useState("dash");
+  const [master, setMaster] = useState(localStorage.getItem("mk") || "");
+  const View = { dash:Dashboard, data:Data, pipe:Pipeline, hpo:HPO, prompt:Prompts,
+                 evalv:EvalVersions, drift:Drift, keys:Keys, rel:Releases, play:Playground }[tab];
+  return (
+    <div className="app">
+      <div className="side">
+        <div className="brand">⚙ LLMOps 콘솔</div>
+        <div className="nav">{TABS.map(([k,label]) =>
+          <button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{label}</button>)}</div>
+      </div>
+      <div className="main">
+        <MasterBar master={master} setMaster={setMaster} />
+        <View master={master} />
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

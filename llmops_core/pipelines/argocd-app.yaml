@@ -1,0 +1,22 @@
+# Argo CD Application — 서빙/게이트웨이 배포 상태를 Git에 선언하고 클러스터에 동기화.
+# 롤백은 Git revert. 환경은 dev/staging/prod를 네임스페이스 + 별도 Application으로 분리.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: llmops-serving-prod
+  namespace: argocd
+spec:
+  project: llmops
+  source:
+    repoURL: https://git.local/llmops-platform.git
+    targetRevision: main
+    path: deploy/serving/prod        # vLLM 배포 매니페스트(모델 버전 핀)
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: serving
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

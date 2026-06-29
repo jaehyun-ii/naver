@@ -1,0 +1,119 @@
+# Argo Workflows — 파인튜닝→평가→게이트→등록→배포 DAG (design 6.3 / 3.3.2).
+# 각 단계는 llmops_core 모듈을 호출하는 컨테이너로 실행된다(이미지: Harbor).
+# Argo는 Service(K8s 컨트롤러)이며, 코어는 이 선언 파일로 사용한다.
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: sft-train-eval-deploy
+  namespace: llmops
+spec:
+  entrypoint: pipeline
+  arguments:
+    parameters:
+      - { name: base-model, value: "naver-hyperclovax/HyperCLOVAX-SEED-Text-Instruct-3B" }
+      - { name: data-version, value: "HEAD" }   # DVC 데이터 버전
+      - { name: tenant, value: "shared" }
+      - { name: faithfulness-threshold, value: "0.8" }
+
+  templates:
+    - name: pipeline
+      dag:
+        tasks:
+          # ── 상류: 데이터 (L1→L3) ──
+          - { name: data-ingest, template: data-ingest }                        # L1 적재/정규화/중복제거
+          - { name: data-quality, template: data-quality, dependencies: [data-ingest] }  # L2 정제+검증 게이트(미달 시 차단)
+          - { name: data-build, template: data-build, dependencies: [data-quality] }     # L3 포맷·분할·버전 고정
+          - { name: data-prep, template: data-prep, dependencies: [data-build] }         # DVC 버전 pull
+          # ── 하류: 학습→평가→(자동게이트)→승인→등록→변환→배포 ──
+          - { name: finetune, template: finetune, dependencies: [data-prep] }
+          - { name: evaluate, template: evaluate, dependencies: [finetune] }      # 1차 자동 게이트(미달 시 비0 종료)
+          - { name: release-gate, template: release-gate, dependencies: [evaluate] }      # 승인 요청 기록
+          - { name: release-approval, template: release-approval, dependencies: [release-gate] }  # 2차 거버넌스(suspend=승인 대기)
+          - { name: register, template: register, dependencies: [release-approval] }
+          - { name: convert, template: convert, dependencies: [register] }        # L6 LoRA merge
+          - { name: deploy, template: deploy, dependencies: [convert] }
+
+    # 0a) L1 적재/정제 (경량 경로; 빅데이터면 --engine spark)
+    - name: data-ingest
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.data_ingest]
+
+    # 0b) L2 품질 게이트 — PII/언어/근사중복 정제 + 검증. 미달 시 비0 종료 → DAG 중단
+    - name: data-quality
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.data_quality]
+        args: ["--mask-pii", "--drop-near-dup"]
+
+    # 0c) L3 데이터셋 — SFT 포맷·결정적 분할·핑거프린트 버전 고정
+    - name: data-build
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.data_build]
+        args: ["--name", "domain-sft"]
+
+    # 1) DVC로 데이터 버전 pull (S3)
+    - name: data-prep
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.data_prep]
+        args: ["--data-version", "{{workflow.parameters.data-version}}"]
+
+    # 2) 파인튜닝 (GPU 노드: workload=training) — unsloth+trl
+    - name: finetune
+      nodeSelector: { workload: training }
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.finetune]
+        args: ["--base-model", "{{workflow.parameters.base-model}}",
+               "--tenant", "{{workflow.parameters.tenant}}"]
+        resources:
+          limits: { nvidia.com/gpu: "1" }
+
+    # 3) 평가 + 게이트 (ragas/deepeval). 임계값 미달 시 비0 종료 → DAG 중단
+    - name: evaluate
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.evaluate]
+        args: ["--threshold-faithfulness", "{{workflow.parameters.faithfulness-threshold}}"]
+
+    # 3b) Release Gateway 승인 요청 기록 (거버넌스 2차 게이트 진입)
+    - name: release-gate
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.release_gate]
+        args: ["--model-ref", "hcx-seed-3b", "--data-version", "{{workflow.parameters.data-version}}"]
+
+    # 3c) 승인 대기 — suspend. 운영자/정책이 Argo resume(=승인) 시까지 보류, 반려는 워크플로우 stop
+    - name: release-approval
+      suspend: {}
+
+    # 4) MLflow Registry 'Production' 승격
+    - name: register
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.register]
+        args: ["--tenant", "{{workflow.parameters.tenant}}"]
+
+    # 4b) L6 변환 — LoRA 어댑터를 베이스에 병합(safetensors). GPU 노드
+    - name: convert
+      nodeSelector: { workload: training }
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.convert]
+        args:
+          - "--base-model"
+          - "{{workflow.parameters.base-model}}"
+          - "--adapter-path"
+          - "/models/{{workflow.parameters.tenant}}/sft"
+          - "--output-dir"
+          - "/models/{{workflow.parameters.tenant}}/merged"
+        resources:
+          limits: { nvidia.com/gpu: "1" }
+
+    # 5) 배포 갱신 → Git 커밋(Argo CD가 감지). 실패 시 git revert로 롤백
+    - name: deploy
+      container:
+        image: harbor.local/llmops/core:latest
+        command: [python, -m, llmops_core.pipelines.steps.deploy]

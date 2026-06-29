@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Env / secrets
+.env
+*.local
+
+# Data / models / artifacts (S3 백본에 보관, repo에 두지 않음)
+/data/
+/models/
+/checkpoints/
+mlruns/
+*.ckpt
+*.safetensors
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dvc/cache/
+
+# 파이프라인 real 모드 산출물(어댑터/병합모델)
+.runs/
+
+# 런타임 프롬프트 스토어(GitPromptStore 기본 경로)
+prompt_store/
+
+# 설계/결과 문서(별도 관리)
+docs/
