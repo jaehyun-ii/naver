@@ -84,7 +84,6 @@ class BuildDatasetBody(BaseModel):
 class PipelineStage(BaseModel):
     name: str
     title: str
-    kind: str  # "real"(이 환경에서 실제 실행) | "sim"(GPU/Argo 필요 → 모의)
     status: str = "pending"  # pending|running|succeeded|failed|waiting|skipped
     detail: str = ""
 
@@ -93,7 +92,6 @@ class PipelineRun(BaseModel):
     id: str
     name: str
     status: str = "running"  # running|waiting|succeeded|failed
-    mode: str = "sim"  # "sim" | "real"
     stages: list[PipelineStage] = Field(default_factory=list)
     release_id: str | None = None  # release-gate가 생성한 승인 요청 ID
     artifacts: dict[str, str] = Field(default_factory=dict)  # adapter/merged/serve_url 등
@@ -103,8 +101,6 @@ class PipelineRun(BaseModel):
 
 class RunPipelineBody(BaseModel):
     name: str = "sft-train-eval-deploy"
-    # mode=real → finetune/convert/deploy를 docker로 실제 실행(GB10). sim → 모의.
-    mode: str = "sim"
     # 학습 방식(조선 도메인 데이터 유형·PET 변형)
     method: str = "sft"  # "sft"(Instruction) | "dpo"(Preference)
     pet: str = "lora"  # "lora" | "dora"
@@ -115,7 +111,7 @@ class RunPipelineBody(BaseModel):
     metrics: dict[str, float] | None = None  # 평가 메트릭(미지정 시 샘플)
     model_ref: str = "hcx-seed-0_5b"
     served_name: str = "hcx-seed-tuned"  # 배포 시 게이트웨이 논리모델명
-    train_max_steps: int = 30  # real 학습 step 상한(PoC 속도용; -1이면 epochs 사용)
+    train_max_steps: int = 30  # 학습 step 상한(PoC 속도용; -1이면 epochs 사용)
     train_epochs: float = 1.0
     # 평가에 적용할 시스템 프롬프트(GitPromptStore 프롬프트명) — 서빙과 동일 적용(평가=서빙 정합).
     # None이면 프롬프트 없이 평가(기존 동작).

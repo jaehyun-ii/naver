@@ -1,6 +1,6 @@
 """학습 CLI — 컨테이너에서 LoRA/DoRA SFT·DPO 1회 실행.
 
-GB10 학습 컨테이너(deploy/serving/Dockerfile.train) 안에서 호출한다:
+학습 컨테이너(deploy/serving/Dockerfile.train) 안에서 호출한다:
 
     # SFT(Instruction)
     python -m llmops_core.training.run --method sft --train /data/train.jsonl \
@@ -63,7 +63,7 @@ def _load_pref_rows(path: str) -> list[dict]:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="trl+peft bf16 LoRA/DoRA SFT·DPO (GB10)")
+    p = argparse.ArgumentParser(description="trl+peft LoRA/DoRA SFT·DPO")
     p.add_argument("--method", choices=["sft", "dpo", "grpo", "ppo"], default="sft")
     p.add_argument("--train", required=True, help="학습 JSONL 경로")
     p.add_argument(

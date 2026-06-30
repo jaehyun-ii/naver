@@ -37,7 +37,6 @@ class AutoRetrainBody(BaseModel):
     thresholds: dict[str, float] | None = None
     auto_approve: bool = True  # 게이트 통과분 자동 승인·배포
     # 재학습 데이터/설정(드리프트 감지 시 사용)
-    mode: str = "sim"
     method: str = "sft"
     served_name: str = "hcx-seed-tuned"
     train_max_steps: int = 20
@@ -90,7 +89,7 @@ def auto_retrain(
     from llmops_core.monitoring.retrain import check_and_retrain
 
     retrain_body = RunPipelineBody(
-        name="drift-retrain", mode=body.mode, method=body.method,
+        name="drift-retrain", method=body.method,
         served_name=body.served_name, train_max_steps=body.train_max_steps,
         labeled=body.labeled, preference=body.preference,
     )

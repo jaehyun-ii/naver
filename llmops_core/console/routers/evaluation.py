@@ -37,7 +37,7 @@ def by_version() -> list[dict]:
             continue
         metrics = _parse_metrics(run.artifacts.get("metrics", ""))
         entry = {
-            "run_id": run.id, "name": run.name, "mode": run.mode,
+            "run_id": run.id, "name": run.name,
             "status": run.status, "method": run.artifacts.get("served_name", ""),
             "metrics": metrics, "created_at": run.created_at,
         }
@@ -49,7 +49,7 @@ def by_version() -> list[dict]:
         best = None
         for r in g["runs"]:
             m = r["metrics"]
-            # 게이트 신호 우선순위(real), 없으면 sim 메트릭, 그래도 없으면 임의 메트릭
+            # 게이트 신호 우선순위, 없으면 임의 메트릭
             score = (m.get("answer_match") or m.get("preference_accuracy")
                      or m.get("reference_f1") or m.get("faithfulness")
                      or (next(iter(m.values()), None)))

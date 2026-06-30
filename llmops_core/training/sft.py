@@ -4,9 +4,8 @@
 출력은 표준 HF 체크포인트 → vLLM 서빙·MLflow 등록과 일관. import는 lazy(GPU 노드).
 
 경로 두 가지:
-- `run_sft`/`run_dpo`: unsloth(고속·4bit) 경로. CUDA sm_80~90 등 unsloth 프리빌트 가용 환경.
-- `run_sft_peft`: unsloth 없이 trl+peft bf16 LoRA. **GB10(Blackwell sm_121/aarch64)** 처럼
-  unsloth/bitsandbytes 프리빌트가 없는 환경의 검증 경로. SEED-0.5B는 4bit 없이 학습 가능.
+- `run_sft`/`run_dpo`: unsloth(고속·4bit) 경로.
+- `run_sft_peft`: unsloth 없이 trl+peft LoRA(bf16 또는 QLoRA 4bit). H100/H200 운영 경로.
 """
 
 from __future__ import annotations
@@ -67,13 +66,10 @@ def run_sft(cfg: SFTJobConfig, train_dataset, mlflow_callback=None):
     return result
 
 
-# ── unsloth 없는 bf16 LoRA 경로 (GB10/Blackwell 검증용) ──
+# ── trl+peft LoRA 경로 (운영 학습기) ──
 @dataclass
 class PeftSFTConfig:
-    """trl+peft bf16 LoRA SFT 설정 — bitsandbytes/unsloth 미사용.
-
-    SEED-0.5B 기준 단일 GB10(121GB 통합메모리)에서 4bit 없이 학습 가능.
-    """
+    """trl+peft LoRA SFT 설정 — bf16 기본, QLoRA(4bit)는 load_in_4bit로 선택."""
 
     base_model: str = "naver-hyperclovax/HyperCLOVAX-SEED-Text-Instruct-0.5B"
     output_dir: str = "outputs/adapter"
@@ -82,7 +78,7 @@ class PeftSFTConfig:
     lora_alpha: int = 32
     lora_dropout: float = 0.05
     use_dora: bool = False  # PET 변형: DoRA(weight-decomposed LoRA). peft use_dora=True
-    load_in_4bit: bool = False  # QLoRA. bitsandbytes 필요(GB10 Blackwell 미지원 → 가드)
+    load_in_4bit: bool = False  # QLoRA(4bit). bitsandbytes 필요(미설치 시 가드 에러)
     hf_token: str | None = None  # gated 모델(예: SEED 1.5B) 접근 토큰. 미지정 시 env HF_TOKEN
     target_modules: tuple[str, ...] = (
         "q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj",
@@ -100,8 +96,7 @@ class PeftSFTConfig:
 def _load_base_for_peft(cfg: "PeftSFTConfig"):
     """bf16(기본) 또는 QLoRA(4bit) 베이스 로드 + gated 모델 토큰 처리. (model, tok) 반환.
 
-    4bit는 bitsandbytes를 요구한다. GB10(Blackwell/aarch64)에는 프리빌트가 없어
-    load_in_4bit=True면 명확한 안내와 함께 실패한다(자원 충족 환경에서 동작).
+    4bit는 bitsandbytes를 요구한다. 미설치 환경에서 load_in_4bit=True면 명확한 안내와 함께 실패한다.
     """
     import os
 
@@ -124,7 +119,7 @@ def _load_base_for_peft(cfg: "PeftSFTConfig"):
         except ImportError as exc:
             raise OptionalDependencyError(
                 "bitsandbytes(QLoRA 4bit)", "training"
-            ) from exc  # GB10 Blackwell에는 프리빌트 없음 → CUDA sm_80~90 또는 소스빌드 필요
+            ) from exc  # bitsandbytes 미설치 → 설치 후 QLoRA 사용
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True, bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True,
@@ -218,7 +213,7 @@ def run_dpo_peft(cfg: PeftSFTConfig, pref_rows, mlflow_callback=None) -> str:
     """unsloth 없는 bf16 DPO(선호 정렬) — trl DPOTrainer + peft LoRA/DoRA. 어댑터 경로 반환.
 
     pref_rows: PreferenceExample 또는 {"prompt","chosen","rejected"} dict 리스트.
-    SFT와 동일한 GB10 bf16 경로(4bit/bitsandbytes 미사용). DoRA는 cfg.use_dora로.
+    SFT와 동일한 trl+peft 경로. DoRA는 cfg.use_dora로.
     """
     try:
         import torch
@@ -284,7 +279,7 @@ def run_grpo_peft(cfg: PeftSFTConfig, prompt_rows, reward_funcs=None, mlflow_cal
     prompt_rows: {"prompt": ...} 리스트(정답 불필요, 보상함수가 점수화).
     reward_funcs: list[callable(prompts, completions, **kw)->list[float]]. 미지정 시
                   길이 적정성 휴리스틱 기본 보상(데모용). 실사용은 도메인 보상함수 주입.
-    추론/판정 강화(4E)에 사용. PPO보다 가볍고 단일 GB10에서 동작.
+    추론/판정 강화(4E)에 사용. PPO보다 가볍고 단일 GPU에서 동작.
     """
     try:
         import torch
@@ -428,7 +423,7 @@ def run_ppo_peft(cfg: PeftSFTConfig, prompt_rows, reward_model_path: str | None 
 
 
 def run_dpo(cfg: SFTJobConfig, pref_dataset, mlflow_callback=None):
-    """선호 정렬(DPO) — unsloth 경로. GB10에서는 run_dpo_peft 사용."""
+    """선호 정렬(DPO) — unsloth 경로. 기본은 run_dpo_peft 사용."""
     try:
         from trl import DPOConfig, DPOTrainer
     except ImportError as exc:  # pragma: no cover

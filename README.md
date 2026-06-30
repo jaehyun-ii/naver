@@ -70,7 +70,7 @@ curl http://localhost:4000/v1/chat/completions \
 
 ```bash
 docker compose -f deploy/docker-compose.yaml up -d --build       # 전체 기동(앱 이미지 빌드 포함)
-docker compose -f deploy/docker-compose.yaml --profile gpu up -d # + GPU 서빙(transformers, GB10)
+docker compose -f deploy/docker-compose.yaml --profile gpu up -d # + GPU 서빙(vLLM)
 docker compose -f deploy/docker-compose.yaml ps                  # 상태 확인
 docker compose -f deploy/docker-compose.yaml down               # 정리
 ```
@@ -107,7 +107,7 @@ docker compose -f deploy/docker-compose.yaml down               # 정리
 
 추가 탭(서빙 운영 보강): **RAG 지식베이스**(`/api/rag` 색인·검색·증강) · **가드레일·안전**(`/api/safety` 가드레일 점검·설정·캐시 히트율) · **드리프트 탐지**(`/api/drift`) · **서빙·카나리**(`/api/serving`).
 
-실행: `pip install -e ".[gateway,tracking]"` 후 `uvicorn llmops_core.console.app:app --port 4100`(real 모드는 호스트, docker 접근 필요).
+실행: `pip install -e ".[gateway,tracking]"` 후 `uvicorn llmops_core.console.app:app --port 4100`(콘솔은 docker 접근 가능한 호스트에서).
 
 ## 콘솔 (운영자/사용자 UI)
 
@@ -122,14 +122,11 @@ uvicorn llmops_core.console.app:app --reload --port 4100
 - 프론트: `console/static/index.html` (React, 빌드 불필요 · CDN). 최초 로드 시 네트워크 필요.
 - 프로덕션 Vite/TS 빌드로 이전 시: `static/index.html`의 컴포넌트를 `src/`로 분리하고 `npm create vite@latest` 후 `dist/`를 `static/`에 배치(현재 환경엔 Node 미설치).
 
-## 파이프라인 PoC — 업로드→학습→평가→승인→배포 (콘솔 "파이프라인" 탭)
+## 파이프라인 — 업로드→학습→평가→승인→배포 (콘솔 "파이프라인" 탭)
 
-콘솔의 **파이프라인** 탭에서 데이터 업로드부터 배포까지 한 화면에서 실행한다. 두 모드:
-
-| 모드 | finetune / convert / deploy | 용도 |
-|---|---|---|
-| **sim** | 모의(상태만 진행) | GPU 없이 흐름·UI 데모. 동기 실행(즉시 완료) |
-| **real** | **GB10에서 docker로 실제 수행** | SEED-0.5B LoRA 학습→병합→서빙 교체까지 진짜 e2e. 백그라운드 실행(프론트 폴링) |
+콘솔의 **파이프라인** 탭에서 데이터 업로드부터 배포까지 한 화면에서 운영 실행한다.
+finetune/convert/deploy를 docker로 실제 수행(LoRA 학습→병합→vLLM 서빙 교체까지 e2e).
+GPU 학습이 분 단위라 백그라운드로 진행하고 프론트가 `/runs/{id}`를 폴링한다.
 
 ### 데이터 유형·형태·학습법 (조선 도메인)
 
@@ -139,19 +136,19 @@ uvicorn llmops_core.console.app:app --reload --port 4100
 |---|---|
 | **데이터 유형** | Instruction(SFT) · Preference(DPO) |
 | **데이터 형태** | QA · RAG(컨텍스트 주입) · 판정(verdict) · 4E Reasoning(CoT) · 도구호출(Tool Calling) — `dataset/formats.py` 변환기 |
-| **학습 방법** | SFT · DPO (둘 다 bf16, GB10 검증) / **PET: LoRA · DoRA** (QLoRA는 GB10 4bit 제약으로 제외) |
+| **학습 방법** | SFT · DPO (bf16) / **PET: LoRA · DoRA · QLoRA(4bit, bitsandbytes)** |
 
-- SFT/DPO·LoRA/DoRA는 `training/sft.py`의 `run_sft_peft`/`run_dpo_peft`(+`use_dora`). CLI: `python -m llmops_core.training.run --method {sft,dpo} [--dora]`.
+- SFT/DPO·LoRA/DoRA는 `training/sft.py`의 `run_sft_peft`/`run_dpo_peft`(+`use_dora`). CLI: `python -m llmops_core.training.run --method {sft,dpo} [--dora] [--qlora]`.
 - 파이프라인 실행 시 `method`(sft|dpo)·`pet`(lora|dora) 지정. DPO는 `preference`({prompt,chosen,rejected}), SFT는 `labeled`({text,response}) 입력.
 
-real 모드 동작(단일 GB10 박스):
+파이프라인 단계 동작:
 1. **data-ingest/quality/build** — 코어 실코드(정규화·품질게이트·결정적분할·핑거프린트)
-2. **finetune** — `llmops/train` 컨테이너에서 trl+peft **bf16 LoRA**(unsloth/4bit 미사용, Blackwell 호환) → 어댑터
+2. **finetune** — `llmops/train` 컨테이너에서 trl+peft LoRA → 어댑터
 3. **evaluate** — 자동 게이트(임계값) → **release-gate** 승인 요청 생성
 4. **approval** — Release Gateway 실연동(콘솔에서 승인/반려)
 5. **register** — MLflow에 params·metrics·어댑터 기록
 6. **convert** — `peft merge_and_unload` → 병합 safetensors
-7. **deploy** — `llmops/hf-serving` 컨테이너로 병합모델 서빙(:8020) + `model_list.yaml` 갱신 + 게이트웨이 재기동 → 챗에서 학습된 모델 호출
+7. **deploy** — vLLM 컨테이너로 병합모델 서빙 + `model_list.yaml` 갱신 + 게이트웨이 재기동 → 챗에서 학습된 모델 호출
 
 ### 준비 (이미지 빌드)
 
@@ -160,28 +157,28 @@ docker build -f deploy/serving/Dockerfile.hf    -t llmops/hf-serving:latest .   
 docker build -f deploy/serving/Dockerfile.train -t llmops/train:latest .        # 학습/병합
 ```
 
-### 실행 (real 모드는 콘솔을 호스트에서 — docker 접근 필요)
+### 실행 (콘솔을 docker 접근 가능한 호스트에서)
 
 ```bash
 pip install -e ".[gateway,tracking]"   # 콘솔 프로세스에 litellm·mlflow 필요
 uvicorn llmops_core.console.app:app --reload --port 4100
-# 브라우저 → 파이프라인 탭 → JSONL 업로드/붙여넣기 → mode=real → 실행 → 승인
+# 브라우저 → 파이프라인 탭 → JSONL 업로드/붙여넣기 → 실행 → 승인
 ```
 
-> 콘솔을 컨테이너로 띄울 경우 real 모드는 `/var/run/docker.sock` 마운트가 필요하다.
+> 콘솔을 컨테이너로 띄울 경우 `/var/run/docker.sock` 마운트가 필요하다.
 > 실행기 설정은 환경변수 `LLMOPS_EXEC__*`(work_dir·이미지명·서빙포트·게이트웨이 컨테이너명 등)로 주입.
-> sim 모드는 GPU/docker 없이 동작하며 콘솔 컨테이너에서 그대로 사용 가능.
+> 단위 테스트는 `LLMOPS_PIPELINE_BACKGROUND=0`(동기) + 실행기 대체(conftest)로 docker 없이 배선만 검증.
 
 ## 확장 기능 (운영·최적화 축)
 
 | 기능 | 사용 | 상태 |
 |---|---|---|
-| **HPO(Optuna)** | `python -m llmops_core.tuning.run --train .. --eval .. --trials N` | ✅ GB10 검증(TPE 탐색→최적 lr/r/alpha) |
-| **학습법 SFT/DPO/GRPO** | `training.run --method {sft,dpo,grpo}` | ✅ GB10 검증(trl 0.23) |
-| **PET LoRA/DoRA** | `--dora` | ✅ GB10 검증 |
-| **QLoRA(4bit)** | `--qlora` | ⚠️ bitsandbytes 필요 → GB10 미지원(명확한 가드 에러) |
-| **멀티-LoRA 서빙(테넌트별 어댑터)** | `serving.multi_lora_server --base .. --adapter t1=/p1 --adapter t2=/p2` | ✅ GB10 검증(모델명 라우팅) |
-| **프롬프트 엔지니어링 평가** | `prompts.optimize --variants .. --cases .. [--promote]` | ✅ GB10 검증(변형 비교→prod 승격) |
+| **HPO(Optuna)** | `python -m llmops_core.tuning.run --train .. --eval .. --trials N` | ✅ 검증(TPE 탐색→최적 lr/r/alpha) |
+| **학습법 SFT/DPO/GRPO** | `training.run --method {sft,dpo,grpo}` | ✅ 검증(trl 0.23) |
+| **PET LoRA/DoRA** | `--dora` | ✅ 검증 |
+| **QLoRA(4bit)** | `--qlora` | ✅ bitsandbytes 환경(H100/H200)에서 동작 |
+| **멀티-LoRA 서빙(테넌트별 어댑터)** | `serving.multi_lora_server --base .. --adapter t1=/p1 --adapter t2=/p2` | ✅ 검증(모델명 라우팅) |
+| **프롬프트 엔지니어링 평가** | `prompts.optimize --variants .. --cases .. [--promote]` | ✅ 검증(변형 비교→prod 승격) |
 | **재학습 스케줄러(Argo Cron 대체)** | `pipelines.scheduler --console .. --interval N [--auto-approve]` | ✅ 검증(콘솔 트리거→자동승인) |
 | **NCP 하이브리드 스토리지** | `LLMOPS_S3__PROVIDER=ncp` (엔드포인트 자동 전환) | ✅ S3 seam 검증(MinIO), NCP는 크레덴셜만 |
 | **서빙 마이크로배칭** | `serving.batching.MicroBatcher` | ✅ 유틸 + 단위테스트 (처리량 상한은 vLLM) |
@@ -214,9 +211,9 @@ uvicorn llmops_core.console.app:app --reload --port 4100
 ### judge·가드레일 프롬프트도 버전 자산
 하드코딩 대신 **GitPromptStore**로 관리 — `judge`(`{q}{ref}{ans}`)·`guardrail-classifier`(`{text}`)·`rag-system`(`{context}`). prod 라벨 등록 시 그것을, 없으면 내장 기본값(코드 수정 없이 prod 승격으로 동작 변경). 콘솔 **프롬프트** 탭 "시스템 특수 프롬프트" 표(`/api/prompts/catalog`)에서 편집·승격. 설정 `LLMOPS_GUARDRAILS__PROMPT_NAME`·`LLMOPS_EVALUATION__JUDGE_PROMPT_NAME`.
 
-### vLLM 처리량 경로 (GB10)
+### vLLM 처리량 경로
 transformers 서버는 레퍼런스/개발용. 프로덕션 처리량(PagedAttention·연속배칭·Multi-LoRA)은
-NGC vLLM 컨테이너 또는 소스빌드로 교체(aarch64+CUDA13+Blackwell은 프리빌트 미가용). seam(`/v1/...`)은 동일.
+vLLM 컨테이너(`vllm/vllm-openai`)가 기본 서빙 백엔드(`LLMOPS_EXEC__SERVE_BACKEND=vllm`). transformers(hf_server)는 vLLM 미가용 환경용 대체. seam(`/v1/...`)은 동일.
 
 ### 대형/게이트 모델
 SEED 1.5B(gated)/3B는 HF 접근 토큰 필요: `--base <model>` + `HF_TOKEN`(또는 `PeftSFTConfig.hf_token`). 0.5B는 공개.

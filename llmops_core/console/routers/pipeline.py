@@ -1,6 +1,7 @@
 """파이프라인(학습·배포 DAG) — 실행·승인 재개·조회.
 
-비GPU 단계는 실제 코어 코드를 실행, GPU/Argo 단계는 모의. 승인 단계는 Release Gateway 실연동.
+데이터·평가 단계는 코어 코드, 학습/병합/배포는 docker 실행, 승인은 Release Gateway 연동.
+GPU 학습이 분 단위라 백그라운드로 진행하고 /runs/{id} 폴링으로 상태를 본다.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ def run(
     svc = services()
     out = start_run(svc, body)
     svc.audit.record(principal.subject, "pipeline.run", target=out.id,
-                     detail={"mode": body.mode, "method": body.method})
+                     detail={"method": body.method})
     return out
 
 

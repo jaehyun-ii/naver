@@ -47,11 +47,22 @@ def test_operator_can_run_pipeline_not_issue_keys(client):
     tok = _issue_token(client, "op-1", ["operator"])
     # 파이프라인 실행 허용
     r = client.post("/api/pipeline/run", headers=_bearer(tok),
-                    json={"mode": "sim", "method": "sft"})
+                    json={"method": "sft"})
     assert r.status_code == 200
     # 키 발급은 admin 전용 → 403
     assert client.post("/api/keys", headers=_bearer(tok),
                        json={"tenant_id": "t1"}).status_code == 403
+
+
+def _wait_release_id(client, run_id, headers):
+    """백그라운드 파이프라인이 승인 대기(release_id 생성)에 도달할 때까지 폴링."""
+    import time
+    for _ in range(40):
+        run = client.get(f"/api/pipeline/runs/{run_id}", headers=headers).json()
+        if run.get("release_id"):
+            return run["release_id"]
+        time.sleep(0.5)
+    raise AssertionError("release_id 미생성")
 
 
 def test_approver_can_approve_operator_cannot(client):
@@ -59,8 +70,8 @@ def test_approver_can_approve_operator_cannot(client):
     appr = _issue_token(client, "approver-1", ["approver"])
     # operator가 파이프라인 실행 → 승인 요청 생성(대기)
     run = client.post("/api/pipeline/run", headers=_bearer(op),
-                      json={"mode": "sim", "method": "sft"}).json()
-    rel = run["release_id"]
+                      json={"method": "sft"}).json()
+    rel = _wait_release_id(client, run["id"], _bearer(op))
     # operator는 승인 권한 없음 → 403
     assert client.post(f"/api/releases/{rel}/approve", headers=_bearer(op),
                        json={"approver": "op-1"}).status_code == 403

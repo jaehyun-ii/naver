@@ -1,6 +1,8 @@
-"""드리프트→재학습→배포 폐루프 테스트 (sim, GPU 불필요)."""
+"""드리프트→재학습→배포 폐루프 테스트 (FakeExecutor 주입, GPU 불필요)."""
 
 from __future__ import annotations
+
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,7 +32,7 @@ def test_no_drift_no_retrain(client):
     _set_baseline(client)
     r = client.post("/api/drift/auto-retrain", headers=MASTER, json={
         "baseline_name": "prod", "current_texts": _REF,  # 동일 분포
-        "mode": "sim", "method": "sft", "labeled": _RETRAIN}).json()
+        "method": "sft", "labeled": _RETRAIN}).json()
     assert r["drift"] is False
     assert r["triggered"] is False
     assert "생략" in r["reason"]
@@ -41,12 +43,17 @@ def test_drift_triggers_retrain_and_deploy(client):
     drifted = ["A completely different English sentence about cloud computing " * 3 for _ in range(30)]
     r = client.post("/api/drift/auto-retrain", headers=MASTER, json={
         "baseline_name": "prod", "current_texts": drifted,  # 분포 급변
-        "mode": "sim", "method": "sft", "labeled": _RETRAIN, "auto_approve": True}).json()
+        "method": "sft", "labeled": _RETRAIN, "auto_approve": True}).json()
     assert r["drift"] is True
     assert r["triggered"] is True
     assert r["run_id"]
-    # sim은 동기 — 자동 승인·배포까지 완료
-    assert r["status"] == "succeeded"
+    # 백그라운드 워처가 waiting→승인→배포 → 완료까지 폴링
+    for _ in range(40):
+        run = client.get(f"/api/pipeline/runs/{r['run_id']}", headers=MASTER).json()
+        if run["status"] in ("succeeded", "failed"):
+            break
+        time.sleep(0.5)
+    assert run["status"] == "succeeded"
 
 
 def test_auto_retrain_unknown_baseline_404(client):
@@ -57,6 +64,6 @@ def test_auto_retrain_unknown_baseline_404(client):
 def test_auto_retrain_records_audit(client):
     _set_baseline(client)
     client.post("/api/drift/auto-retrain", headers=MASTER, json={
-        "baseline_name": "prod", "current_texts": _REF, "mode": "sim", "labeled": _RETRAIN})
+        "baseline_name": "prod", "current_texts": _REF, "labeled": _RETRAIN})
     actions = [e["action"] for e in client.get("/api/audit", headers=MASTER).json()]
     assert "drift.auto_retrain" in actions

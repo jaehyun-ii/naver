@@ -83,7 +83,7 @@ def run_reference_metrics(cases: list[EvalCase]) -> dict[str, float]:
 
     - reference_f1: 문자 단위 F1 평균(내용 일치도)
     - answer_match: 정답 핵심부 포함 비율(느슨한 정확도)
-    GB10 로컬·오프라인에서 외부 키 없이 학습 모델 품질을 정량화한다.
+    로컬·오프라인에서 외부 키 없이 학습 모델 품질을 정량화한다.
     """
     f1s: list[float] = []
     matches: list[float] = []

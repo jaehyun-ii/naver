@@ -1,4 +1,4 @@
-"""멀티-LoRA OpenAI 서버 — 공통 베이스 1개 + 테넌트별 어댑터 N개 동시 서빙 (GB10/transformers).
+"""멀티-LoRA OpenAI 서버 — 공통 베이스 1개 + 테넌트별 어댑터 N개 동시 서빙 (transformers 백엔드).
 
 설계의 멀티테넌시 서빙(베이스 공유 + 테넌트 LoRA 핫스왑)을 transformers+peft로 구현한다.
 요청의 model 필드(논리/서빙명)로 어댑터를 선택(set_adapter), 'base'/미지정이면 베이스로 응답.

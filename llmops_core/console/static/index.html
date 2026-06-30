@@ -385,7 +385,6 @@ function Pipeline({ master }) {
   const [method, setMethod] = useState("sft");   // sft(Instruction) | dpo(Preference)
   const [pet, setPet] = useState("lora");        // lora | dora
   const [data, setData] = useState(SFT_SAMPLE);
-  const [mode, setMode] = useState("real");
   const [steps, setSteps] = useState(20);
   const [servedName, setServedName] = useState("hcx-seed-tuned");
   const [promptName, setPromptName] = useState("");   // 평가에 적용할 prod 프롬프트(GitPromptStore)
@@ -414,7 +413,7 @@ function Pipeline({ master }) {
     let rows;
     try { rows = parseJsonl(data); }
     catch(e){ setErr("JSONL 파싱 실패: "+e.message); return; }
-    const body = { name:"console-e2e", mode, method, pet, served_name:servedName,
+    const body = { name:"console-e2e", method, pet, served_name:servedName,
                    train_max_steps:Number(steps), use_rag:useRag };
     if (promptName.trim()) body.prompt_name = promptName.trim();
     if (judgeModel) body.judge_model = judgeModel;
@@ -454,7 +453,7 @@ function Pipeline({ master }) {
   return (
     <div>
       <h2>파이프라인 — 업로드→학습→평가→승인→배포</h2>
-      <div className="sub">데이터 적재·품질·빌드·평가·승인은 실제 실행. <b>real</b> 모드는 GB10에서 SEED-0.5B LoRA 학습·병합·서빙 교체까지 docker로 실제 수행(분 단위, 백그라운드).</div>
+      <div className="sub">데이터 적재·품질·빌드·학습·병합·서빙 교체까지 docker로 실제 수행(GPU 학습은 분 단위·백그라운드, /runs 폴링).</div>
       {err && <div className="err">⚠ {err}</div>}
       <div className="card">
         <div className="bar">
@@ -478,12 +477,6 @@ function Pipeline({ master }) {
         </div>
         <textarea value={data} onChange={e=>setData(e.target.value)} />
         <div className="bar" style={{marginTop:10}}>
-          <label className="muted">모드
-            <select value={mode} onChange={e=>setMode(e.target.value)} style={{marginLeft:6}}>
-              <option value="real">real (GB10 실학습)</option>
-              <option value="sim">sim (모의)</option>
-            </select>
-          </label>
           <label className="muted">max_steps
             <input value={steps} onChange={e=>setSteps(e.target.value)} style={{width:70,marginLeft:6}} />
           </label>
@@ -517,16 +510,14 @@ function Pipeline({ master }) {
         <div className="bar">
           <b>{run.id}</b>
           <span className="pill" style={{background:"#10261f", color:STAGE_CLR[run.status]||"var(--fg)"}}>{run.status}</span>
-          <span className="muted">mode={run.mode}</span>
           {run.status==="waiting" && <span>
             <button className="btn ok" onClick={approve}>승인 → 배포</button>{" "}
             <button className="btn danger" onClick={reject}>반려</button>
           </span>}
         </div>
-        <table><thead><tr><th>단계</th><th>종류</th><th>상태</th><th>상세</th></tr></thead>
+        <table><thead><tr><th>단계</th><th>상태</th><th>상세</th></tr></thead>
         <tbody>{run.stages.map(s => <tr key={s.name}>
           <td>{s.title}</td>
-          <td><span className="kv">{s.kind}</span></td>
           <td><b style={{color:STAGE_CLR[s.status]||"var(--fg)"}}>{s.status}</b></td>
           <td className="kv">{s.detail}</td>
         </tr>)}</tbody></table>
@@ -537,7 +528,7 @@ function Pipeline({ master }) {
         {run.artifacts && Object.keys(run.artifacts).length>0 && <div className="kv" style={{marginTop:8}}>
           {Object.entries(run.artifacts).map(([k,v])=><div key={k}><b>{k}</b>: <span className="mono">{v}</span></div>)}
         </div>}
-        {run.status==="succeeded" && run.mode==="real" && <div className="muted" style={{marginTop:8}}>
+        {run.status==="succeeded" && <div className="muted" style={{marginTop:8}}>
           배포 완료 → 챗 플레이그라운드에서 <span className="mono">{run.artifacts.served_name}</span> 모델로 호출해 보세요.</div>}
       </div>}
     </div>
@@ -609,11 +600,11 @@ function Dashboard({ master }) {
 // ── HPO (모델 학습 파라미터 최적화) ──
 function HPO({ master }) {
   const [labeled, setLabeled] = useState('{"text":"환불 정책?","response":"14일 이내 전액 환불"}\n{"text":"배송 기간?","response":"평일 2~3일"}');
-  const [mode, setMode] = useState("sim"); const [trials, setTrials] = useState(4);
+  const [trials, setTrials] = useState(4);
   const [run, setRun] = useState(null); const [err, setErr] = useState("");
   const start = async () => { setErr("");
     let rows; try { rows = parseJsonl(labeled);} catch(e){ setErr("JSONL 오류: "+e.message); return; }
-    try { setRun(await api("/api/tuning/hpo",{method:"POST",master,body:{mode,labeled:rows,trials:Number(trials)}})); }
+    try { setRun(await api("/api/tuning/hpo",{method:"POST",master,body:{labeled:rows,trials:Number(trials)}})); }
     catch(e){ setErr(e.message); } };
   useEffect(()=>{ if(!run||run.status!=="running")return;
     const t=setInterval(async()=>{ try{ setRun(await api(`/api/tuning/hpo/${run.id}`,{master})); }catch(e){} },2000);
@@ -621,14 +612,12 @@ function HPO({ master }) {
   return (
     <div>
       <h2>HPO — 모델 학습 파라미터 최적화</h2>
-      <div className="sub">Optuna(TPE) 탐색. 각 trial = 짧은 SFT + 평가. <b>real</b>은 GB10에서 실제 학습(분 단위).</div>
+      <div className="sub">Optuna(TPE) 탐색. 각 trial = 짧은 SFT + 평가. 학습 컨테이너에서 실제 학습(분 단위·백그라운드).</div>
       {err&&<div className="err">⚠ {err}</div>}
       <div className="card">
         <b>학습 데이터 ({"{text,response}"})</b>
         <textarea value={labeled} onChange={e=>setLabeled(e.target.value)} />
         <div className="bar" style={{marginTop:8}}>
-          <label className="muted">모드<select value={mode} onChange={e=>setMode(e.target.value)} style={{marginLeft:6}}>
-            <option value="sim">sim (즉시)</option><option value="real">real (GB10)</option></select></label>
           <label className="muted">trials<input value={trials} onChange={e=>setTrials(e.target.value)} style={{width:60,marginLeft:6}}/></label>
           <button className="btn" onClick={start} disabled={!master||(run&&run.status==="running")}>{run&&run.status==="running"?"탐색 중…":"HPO 시작"}</button>
         </div>
@@ -910,13 +899,12 @@ function Wizard({ master, nav }) {
   const [step,setStep]=useState(0);
   const [data,setData]=useState('{"text":"선급증서 유효기간이 지나면 어떻게 하나요?","response":"즉시 선급기관에 재검사를 신청해 갱신합니다."}\n{"text":"공장인수시험에 불합격하면?","response":"부적합 항목을 시정조치 요구서로 발행하고 재시험합니다."}\n{"text":"재료증명서가 없으면?","response":"공급사에 제출을 요구하고 미제출 시 입고를 보류합니다."}');
   const [kind,setKind]=useState("qa"); // qa(일반) | pref(선호)
-  const [speed,setSpeed]=useState("quick"); // quick(즉시 체험) | real(실제 학습)
   const [name,setName]=useState("우리회사-모델");
   const [run,setRun]=useState(null); const [err,setErr]=useState("");
   const onFile=(e)=>{ const f=e.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=()=>setData(String(r.result).trim()); r.readAsText(f); };
   const start=async()=>{ setErr("");
     let rows; try{ rows=parseJsonl(data); }catch(e){ setErr("입력 형식이 올바르지 않습니다. 예시처럼 한 줄에 하나씩 입력하세요."); return; }
-    const body={name,mode:speed==="quick"?"sim":"real",method:kind==="pref"?"dpo":"sft",served_name:name.replace(/[^a-zA-Z0-9_-]/g,"-")||"tuned",train_max_steps:20};
+    const body={name,method:kind==="pref"?"dpo":"sft",served_name:name.replace(/[^a-zA-Z0-9_-]/g,"-")||"tuned",train_max_steps:20};
     if(kind==="pref") body.preference=rows; else body.labeled=rows;
     try{ setRun(await api("/api/pipeline/run",{method:"POST",master,body})); setStep(2); }catch(e){ setErr(e.message); }
   };
@@ -949,8 +937,6 @@ function Wizard({ master, nav }) {
         <div className="grid2" style={{marginTop:10}}>
           <div><div className="kv">학습 방식 <Help>일반: 질문에 답하도록 가르칩니다(대부분 이것). 선호 비교: 좋은 답/나쁜 답을 비교해 더 나은 답을 고르도록 정렬합니다.</Help></div>
             <select value={kind} onChange={e=>setKind(e.target.value)}><option value="qa">일반 질의응답 (권장)</option><option value="pref">선호 비교</option></select></div>
-          <div><div className="kv">실행 속도 <Help>빠른 체험: GPU 없이 흐름만 즉시 확인(데모). 실제 학습: GPU로 진짜 학습(수 분 소요).</Help></div>
-            <select value={speed} onChange={e=>setSpeed(e.target.value)}><option value="quick">빠른 체험 (즉시)</option><option value="real">실제 학습 (수 분)</option></select></div>
           <div><div className="kv">모델 이름 <Help>배포 후 이 이름으로 모델을 부릅니다.</Help></div>
             <input value={name} onChange={e=>setName(e.target.value)}/></div>
         </div>

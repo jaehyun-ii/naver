@@ -1,9 +1,9 @@
-"""실 e2e 실행기 — GPU/배포 단계를 docker로 오케스트레이션 (단일 GB10 박스 PoC).
+"""운영 e2e 실행기 — GPU/배포 단계를 docker로 오케스트레이션 (H100/H200 단일·다중 GPU).
 
 콘솔 파이프라인의 finetune/convert/deploy 단계를 **실제로** 수행한다:
-- finetune: `llmops/train` 컨테이너에서 trl+peft bf16 LoRA SFT → 어댑터
+- finetune: `llmops/train` 컨테이너에서 trl+peft LoRA SFT → 어댑터
 - convert : `llmops/train` 컨테이너에서 merge_lora → 병합 safetensors
-- deploy  : `llmops/hf-serving` 컨테이너로 병합모델 서빙 + model_list.yaml 갱신 + 게이트웨이 재기동
+- deploy  : vLLM 컨테이너로 병합모델 서빙 + model_list.yaml 갱신 + 게이트웨이 재기동
 
 전제: 콘솔이 **docker에 접근 가능한 호스트**에서 실행(README의 `uvicorn ... console.app`).
 컨테이너로 콘솔을 띄울 경우 `/var/run/docker.sock` 마운트 필요.
@@ -44,8 +44,8 @@ class ExecutorConfig:
     serve_image: str = field(
         default_factory=lambda: _env("SERVE_IMAGE", "llmops/hf-serving:latest")
     )
-    # 서빙 백엔드: transformers(GB10/개발) | vllm(H200/프로덕션 처리량)
-    serve_backend: str = field(default_factory=lambda: _env("SERVE_BACKEND", "transformers"))
+    # 서빙 백엔드: vllm(기본·프로덕션 처리량, PagedAttention·연속배칭) | transformers(대체)
+    serve_backend: str = field(default_factory=lambda: _env("SERVE_BACKEND", "vllm"))
     vllm_image: str = field(default_factory=lambda: _env("VLLM_IMAGE", "vllm/vllm-openai:latest"))
     base_model: str = field(
         default_factory=lambda: _env(
@@ -325,7 +325,7 @@ class RealExecutor:
                 "--port", "8000", "--gpu-memory-utilization", "0.90",
                 "--max-model-len", "4096",
             ]
-        # 기본: transformers(hf_server) — GB10/개발
+        # 대체: transformers(hf_server) — vllm 미가용 환경용 레퍼런스 백엔드
         return self.cfg.serve_image, [
             "--model", "/model", "--served-name", served_name, "--port", "8000",
         ]
@@ -410,7 +410,7 @@ class RealExecutor:
 
 
 def docker_available() -> bool:
-    """docker CLI 접근 가능 여부(real 모드 사용 가능성 판정)."""
+    """docker CLI 접근 가능 여부(파이프라인 실행 가능성 판정)."""
     try:
         return subprocess.run(
             ["docker", "version"], capture_output=True, text=True, timeout=10

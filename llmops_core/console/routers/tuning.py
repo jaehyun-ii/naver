@@ -1,7 +1,7 @@
 """모델 학습 파라미터 최적화 — Optuna HPO (콘솔 UI).
 
-sim: 즉시 모의 trial(TPE 흉내)로 탐색 곡선을 보여줌. real: 학습 컨테이너에서 실제 HPO 실행
-(각 trial = 짧은 SFT + reference 평가). 결과는 HPORegistry에 저장, 프론트가 폴링.
+학습 컨테이너에서 실제 HPO 실행(각 trial = 짧은 SFT + reference 평가). 분 단위라
+백그라운드로 진행하고 결과는 HPORegistry에 저장, 프론트가 폴링한다.
 """
 
 from __future__ import annotations
@@ -25,32 +25,10 @@ _SAMPLE_LABELED = [
 
 
 class HPOBody(BaseModel):
-    mode: str = "sim"  # sim | real
     labeled: list[dict] = Field(default_factory=list)  # {text,response}
     eval: list[dict] = Field(default_factory=list)  # {question,expected}
     trials: int = 4
     steps: int = 12
-
-
-def _mock_search(trials: int) -> dict:
-    """TPE 흉내 모의 탐색 — 점차 좋아지는 trial 곡선(데모)."""
-    import hashlib
-
-    space_r = [8, 16, 32]
-    space_a = [16, 32, 64]
-    runs = []
-    best = None
-    for i in range(trials):
-        h = int(hashlib.md5(f"trial{i}".encode()).hexdigest()[:6], 16)
-        lr = round(5e-5 + (h % 1000) / 1000 * 4.5e-4, 6)
-        r = space_r[h % 3]
-        a = space_a[(h // 3) % 3]
-        score = round(0.15 + 0.1 * (i / max(trials - 1, 1)) + (h % 50) / 1000, 4)
-        params = {"learning_rate": lr, "lora_r": r, "lora_alpha": a}
-        runs.append({"trial": i, "params": params, "score": score})
-        if best is None or score > best["score"]:
-            best = {"params": params, "score": score}
-    return {"trials": runs, "best_params": best["params"], "best_value": best["score"]}
 
 
 def _run_real(hpo_id: str, body: HPOBody) -> None:
@@ -72,15 +50,10 @@ def _run_real(hpo_id: str, body: HPOBody) -> None:
 @router.post("/hpo")
 def start_hpo(body: HPOBody) -> dict:
     hpo_id = "hpo-" + secrets.token_urlsafe(5)
-    rec = {"id": hpo_id, "mode": body.mode, "trials_n": body.trials, "status": "running",
+    rec = {"id": hpo_id, "trials_n": body.trials, "status": "running",
            "created_at": time.time(), "trials": [], "best_params": None, "best_value": None}
     services().hpo.add(rec)
-    if body.mode == "real":
-        threading.Thread(target=_run_real, args=(hpo_id, body), daemon=True).start()
-    else:
-        res = _mock_search(body.trials)
-        rec.update(status="succeeded", **res)
-        services().hpo.save(rec)  # 영속(HA)
+    threading.Thread(target=_run_real, args=(hpo_id, body), daemon=True).start()
     return rec
 
 

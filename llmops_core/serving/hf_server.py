@@ -1,6 +1,6 @@
-"""OpenAI 호환 서빙 서버 — transformers 백엔드 (GB10 호환 레퍼런스/개발 백엔드).
+"""OpenAI 호환 서빙 서버 — transformers 백엔드 (vLLM 미가용 환경용 레퍼런스 백엔드).
 
-설계의 서빙 계층은 vLLM이 기본이나, Blackwell GB10(aarch64+CUDA13)에서 vLLM 프리빌트가
+서빙 계층은 vLLM이 기본이나, vLLM 프리빌트가
 즉시 가용하지 않으므로, 동일한 OpenAI seam(`/v1/chat/completions`)을 transformers로 제공한다.
 게이트웨이·관측·평가 등 상위 경로는 백엔드와 무관하게 동일하게 동작한다.
 → 프로덕션 처리량(PagedAttention/Multi-LoRA)은 NGC vLLM 컨테이너/소스빌드로 교체.

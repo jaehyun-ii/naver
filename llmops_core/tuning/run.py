@@ -48,7 +48,7 @@ def _build_objective(base: str, train_rows: list[dict], eval_cases, steps: int):
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Optuna HPO for SFT (GB10)")
+    p = argparse.ArgumentParser(description="Optuna HPO for SFT")
     p.add_argument("--train", required=True)
     p.add_argument("--eval", required=True)
     p.add_argument("--base", default="naver-hyperclovax/HyperCLOVAX-SEED-Text-Instruct-0.5B")
