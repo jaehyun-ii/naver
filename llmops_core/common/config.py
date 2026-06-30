@@ -64,6 +64,10 @@ class GuardrailSettings(BaseModel):
     block_on_banned: bool = True  # 금칙어 출력 차단
     mask_output_pii: bool = False  # 출력 PII 마스킹(Presidio 필요)
     banned_terms: list[str] = Field(default_factory=list)
+    # 모델 기반 가드레일 — model_list.yaml의 논리명(예: LlamaGuard 서빙). None이면 휴리스틱만.
+    # 분류 모델이 'unsafe' 판정 시 입력 차단(휴리스틱과 OR 결합).
+    model: str | None = None
+    block_on_model_flag: bool = True
 
 
 class RagSettings(BaseModel):

@@ -20,6 +20,7 @@ router = APIRouter(prefix="/api/safety", tags=["safety"],
 class CheckBody(BaseModel):
     input: str | None = None  # 사용자 입력(인젝션 점검)
     output: str | None = None  # 모델 출력(금칙어·PII 점검)
+    model: str | None = None  # 가드레일 분류 모델 override(논리명) — 점검에 사용
 
 
 @router.get("/config")
@@ -33,6 +34,7 @@ def config() -> dict:
             "block_on_banned": s.guardrails.block_on_banned,
             "mask_output_pii": s.guardrails.mask_output_pii,
             "banned_terms": s.guardrails.banned_terms,
+            "model": s.guardrails.model,  # 모델 기반 가드레일(없으면 휴리스틱만)
         },
         "rag_serving": {"enabled": s.rag.serving_enabled, "top_k": s.rag.top_k,
                         "embedder": s.rag.embedder, "backend": s.rag.backend},
@@ -60,8 +62,16 @@ def cache_stats() -> dict:
 
 @router.post("/guardrail/check")
 def guardrail_check(body: CheckBody) -> dict:
-    """입력/출력을 게이트웨이와 동일한 가드레일로 점검(차단 여부·플래그)."""
-    eng = GuardrailEngine()
+    """입력/출력을 게이트웨이와 동일한 가드레일로 점검(차단 여부·플래그).
+
+    body.model 지정 시 그 논리 모델을 가드레일 분류기로 사용해 점검(모델 선택 테스트).
+    """
+    if body.model:
+        s = get_settings()
+        gs = s.guardrails.model_copy(update={"model": body.model})
+        eng = GuardrailEngine(s.model_copy(update={"guardrails": gs}))
+    else:
+        eng = GuardrailEngine()
     out: dict = {}
     if body.input is not None:
         r = eng.check_input([{"role": "user", "content": body.input}])

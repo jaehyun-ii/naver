@@ -124,3 +124,5 @@ class RunPipelineBody(BaseModel):
     # 평가에 RAG 검색·컨텍스트 주입 적용(서빙이 RAG 기반일 때). False면 미적용(기존 동작).
     use_rag: bool = False
     rag_top_k: int = 4
+    # LLM-as-judge 모델(model_list.yaml 논리명). 지정 시 평가에 judge_score 추가(reference 한정).
+    judge_model: str | None = None
