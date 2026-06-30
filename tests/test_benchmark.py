@@ -68,3 +68,18 @@ def test_register_list_run_leaderboard(client, monkeypatch):
 def test_run_unknown_benchmark_404(client):
     assert client.post("/api/benchmark/run", headers=MASTER,
                        json={"name": "none", "model": "m"}).status_code == 404
+
+
+def test_preference_benchmark_via_executor(client):
+    # 선호 벤치마크는 executor(컨테이너 logprob) 경로 — conftest FakeExecutor가 대체
+    pref_cases = [{"prompt": "q", "chosen": "좋은 답", "rejected": "나쁜 답"}]
+    r = client.post("/api/benchmark", headers=MASTER,
+                    json={"name": "pref-b", "task": "preference", "cases": pref_cases})
+    assert r.status_code == 200 and r.json()["task"] == "preference"
+    run = client.post("/api/benchmark/run", headers=MASTER,
+                      json={"name": "pref-b", "model": "naver-hyperclovax/X"}).json()
+    assert run["task"] == "preference"
+    assert run["metrics"]["preference_accuracy"] == 1.0
+    # 리더보드는 preference_accuracy로 정렬
+    board = client.get("/api/benchmark/results?name=pref-b", headers=MASTER).json()["leaderboard"]
+    assert board["pref-b"][0]["metrics"]["preference_accuracy"] == 1.0

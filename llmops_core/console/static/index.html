@@ -1212,25 +1212,33 @@ function Traces({ master }) {
 function Benchmark({ master }) {
   const [list, setList] = useState([]); const [models, setModels] = useState([]);
   const [name, setName] = useState("조선-QA"); const [model, setModel] = useState("");
-  const [cases, setCases] = useState('{"question":"선급증서 유효기간이 지나면?","expected":"즉시 선급기관에 재검사를 신청해 갱신합니다"}\n{"question":"FAT 불합격 시 절차는?","expected":"부적합 항목을 시정조치 요구서로 발행하고 재시험합니다"}');
+  const [task, setTask] = useState("reference");
+  const REF_SAMPLE='{"question":"선급증서 유효기간이 지나면?","expected":"즉시 선급기관에 재검사를 신청해 갱신합니다"}\n{"question":"FAT 불합격 시 절차는?","expected":"부적합 항목을 시정조치 요구서로 발행하고 재시험합니다"}';
+  const PREF_SAMPLE='{"prompt":"선급증서 유효기간이 지나면?","chosen":"즉시 선급기관에 재검사를 신청해 갱신합니다","rejected":"그냥 둬도 됩니다"}\n{"prompt":"FAT 불합격 시?","chosen":"시정조치 요구서를 발행하고 재시험합니다","rejected":"무시하고 출하합니다"}';
+  const [cases, setCases] = useState(REF_SAMPLE);
+  const switchTask=(t)=>{ setTask(t); if(cases===REF_SAMPLE||cases===PREF_SAMPLE||!cases.trim()) setCases(t==="preference"?PREF_SAMPLE:REF_SAMPLE); };
   const [board, setBoard] = useState({}); const [last, setLast] = useState(null); const [err, setErr] = useState("");
   const load = useCallback(()=>{ api("/api/benchmark",{master}).then(setList).catch(e=>setErr(e.message));
     api("/api/benchmark/results",{master}).then(d=>setBoard(d.leaderboard||{})).catch(()=>{}); },[master]);
   useEffect(()=>{ if(master){ load(); api("/api/models",{master}).then(d=>{ setModels(d.models||[]); setModel((d.models||[])[0]||""); }).catch(()=>{}); } },[master,load]);
   const register = async()=>{ setErr("");
     let rows; try{ rows=parseJsonl(cases); }catch(e){ setErr("JSONL 오류: "+e.message); return; }
-    try{ await api("/api/benchmark",{method:"POST",master,body:{name,cases:rows}}); load(); }catch(e){ setErr(e.message); } };
+    try{ await api("/api/benchmark",{method:"POST",master,body:{name,task,cases:rows}}); load(); }catch(e){ setErr(e.message); } };
   const run = async(bn)=>{ setErr(""); setLast(null);
     try{ setLast(await api("/api/benchmark/run",{method:"POST",master,body:{name:bn,model}})); load(); }catch(e){ setErr(e.message); } };
   return (<div>
     <h2>벤치마크 평가 — 평가 데이터셋 기반</h2>
-    <div className="sub">명명·고정된 평가셋에 모델(논리명)을 돌려 표준 메트릭 산출. 같은 벤치마크로 여러 모델을 리더보드로 비교(judge 불필요·결정적).</div>
+    <div className="sub">명명·고정된 평가셋에 모델을 돌려 표준 메트릭 산출. 같은 벤치마크로 여러 모델을 리더보드로 비교(judge 불필요·결정적). <b>reference</b>=생성·정답대비(answer_match), <b>preference</b>=선호정확도(chosen&gt;rejected, logprob).</div>
     {err&&<div className="err">⚠ {err}</div>}
     <div className="grid2">
       <div className="card">
         <b>벤치마크 등록</b>
-        <div className="bar" style={{marginTop:8}}><input value={name} onChange={e=>setName(e.target.value)} placeholder="이름" style={{width:160}}/></div>
-        <textarea value={cases} onChange={e=>setCases(e.target.value)} placeholder='{"question":...,"expected":...} 한 줄에 하나'/>
+        <div className="bar" style={{marginTop:8}}>
+          <input value={name} onChange={e=>setName(e.target.value)} placeholder="이름" style={{width:140}}/>
+          <label className="muted">유형<select value={task} onChange={e=>switchTask(e.target.value)} style={{marginLeft:6}}>
+            <option value="reference">reference (생성·정답)</option><option value="preference">preference (선호)</option></select></label>
+        </div>
+        <textarea value={cases} onChange={e=>setCases(e.target.value)} placeholder={task==="preference"?'{"prompt":...,"chosen":...,"rejected":...}':'{"question":...,"expected":...}'}/>
         <div className="bar"><button className="btn" onClick={register} disabled={!master}>등록</button></div>
       </div>
       <div className="card">
@@ -1239,19 +1247,21 @@ function Benchmark({ master }) {
           <label className="muted">모델<select value={model} onChange={e=>setModel(e.target.value)} style={{marginLeft:6}}>
             {models.map(m=><option key={m} value={m}>{m}</option>)}</select></label>
         </div>
-        <table style={{marginTop:8}}><thead><tr><th>벤치마크</th><th>케이스</th><th></th></tr></thead>
-          <tbody>{list.map((b,i)=><tr key={i}><td className="mono">{b.name}</td><td>{b.num_cases}</td>
+        <table style={{marginTop:8}}><thead><tr><th>벤치마크</th><th>유형</th><th>케이스</th><th></th></tr></thead>
+          <tbody>{list.map((b,i)=><tr key={i}><td className="mono">{b.name}</td><td className="kv">{b.task}</td><td>{b.num_cases}</td>
             <td><button className="btn ghost" style={{padding:"2px 8px"}} onClick={()=>run(b.name)} disabled={!master||!model}>실행</button></td></tr>)}
-          {!list.length&&<tr><td colSpan="3" className="muted">등록된 벤치마크 없음</td></tr>}</tbody></table>
-        {last&&<div className="kv" style={{marginTop:8}}>최근 실행: <b className="mono">{last.model}</b> · answer_match={last.metrics.answer_match} · reference_f1={last.metrics.reference_f1} {last.errors>0&&<span style={{color:"var(--err)"}}>(에러 {last.errors})</span>}</div>}
+          {!list.length&&<tr><td colSpan="4" className="muted">등록된 벤치마크 없음</td></tr>}</tbody></table>
+        {last&&<div className="kv" style={{marginTop:8}}>최근 실행: <b className="mono">{last.model}</b> · {last.task==="preference"?`preference_accuracy=${last.metrics.preference_accuracy}`:`answer_match=${last.metrics.answer_match} · reference_f1=${last.metrics.reference_f1}`} {last.errors>0&&<span style={{color:"var(--err)"}}>(에러 {last.errors})</span>}</div>}
       </div>
     </div>
-    {Object.entries(board).map(([bn,rows])=><div className="card" key={bn}>
-      <b>리더보드 — {bn}</b>
-      <table style={{marginTop:8}}><thead><tr><th>#</th><th>모델</th><th>answer_match</th><th>reference_f1</th><th>케이스</th></tr></thead>
+    {Object.entries(board).map(([bn,rows])=>{ const pref=rows[0]&&rows[0].task==="preference";
+      return <div className="card" key={bn}>
+      <b>리더보드 — {bn}</b> <span className="muted" style={{fontSize:11}}>({pref?"preference_accuracy":"answer_match"} 순)</span>
+      <table style={{marginTop:8}}><thead><tr><th>#</th><th>모델</th><th>{pref?"preference_accuracy":"answer_match"}</th><th>{pref?"preference_margin":"reference_f1"}</th><th>케이스</th></tr></thead>
         <tbody>{rows.map((r,i)=><tr key={i}><td>{i+1}</td><td className="mono">{r.model}</td>
-          <td><b style={{color:"var(--ok)"}}>{r.metrics.answer_match}</b></td><td>{r.metrics.reference_f1}</td><td>{r.num_cases}</td></tr>)}</tbody></table>
-    </div>)}
+          <td><b style={{color:"var(--ok)"}}>{pref?r.metrics.preference_accuracy:r.metrics.answer_match}</b></td>
+          <td>{pref?r.metrics.preference_margin:r.metrics.reference_f1}</td><td>{r.num_cases}</td></tr>)}</tbody></table>
+    </div>; })}
   </div>);
 }
 

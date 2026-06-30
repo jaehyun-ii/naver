@@ -27,6 +27,10 @@ class FakeExecutor:
             metrics = {"answer_match": 1.0, "reference_f1": 0.9}
         return {"metrics": metrics, "num_cases": len(cases), "prompt": None, "rag": None}
 
+    def benchmark_preference(self, model, cases, **kw):
+        return {"metrics": {"preference_accuracy": 1.0, "preference_margin": 0.5},
+                "num_cases": len(cases)}
+
     def merge(self, run_id, **kw):
         return f"/fake/runs/{run_id}/merged"
 

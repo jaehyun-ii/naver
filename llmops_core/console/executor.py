@@ -241,6 +241,34 @@ class RealExecutor:
                     continue
         raise ExecutorError(f"평가 메트릭 파싱 실패:\n{out[-500:]}")
 
+    # ── 선호 벤치마크(어댑터 없이 base 모델 logprob 평가) ──
+    def benchmark_preference(self, model: str, cases: list[dict], *,
+                             run_id: str = "bench-pref") -> dict:
+        """{prompt,chosen,rejected} 케이스를 base 모델로 logprob 평가 → preference_accuracy.
+
+        선호 평가는 logprob이 필요해 게이트웨이가 아닌 컨테이너 in-process(local_eval)로 수행.
+        어댑터 없이 model을 --base로 로드한다. {metrics, num_cases} 반환.
+        """
+        rd = self._run_dir(run_id)
+        (rd / "eval.jsonl").write_text(
+            "\n".join(json.dumps(c, ensure_ascii=False) for c in cases), encoding="utf-8")
+        tail = [
+            *self._common_mounts(), "-v", f"{rd}:/work",
+            "--entrypoint", "python3", self.cfg.train_image,
+            "-m", "llmops_core.evaluation.local_eval",
+            "--base", model, "--cases", "/work/eval.jsonl",
+            "--task", "preference", "--out", "/work/metrics.json",
+        ]
+        out = self._gpu_run(tail)
+        for line in reversed(out.strip().splitlines()):
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    return json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+        raise ExecutorError(f"선호 벤치마크 파싱 실패:\n{out[-500:]}")
+
     # ── HPO(Optuna) ──
     def hpo(self, run_id: str, labeled: list[dict], eval_cases: list[dict], *,
             trials: int = 4, steps: int = 12, base_model: str | None = None) -> dict:
