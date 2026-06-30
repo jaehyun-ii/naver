@@ -6,7 +6,8 @@ MinIO 콘솔을 따로 띄우지 않고 boto3(common.storage)로 콘솔에서 �
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from llmops_core.common.storage import get_s3_client
 from llmops_core.console.security import require_perm
@@ -54,3 +55,21 @@ def presign(bucket: str, key: str, expires: int = 600) -> dict:
         return {"available": True, "url": url}
     except Exception as exc:  # noqa: BLE001
         return {"available": False, "error": str(exc)}
+
+
+@router.get("/download")
+def download(bucket: str, key: str) -> StreamingResponse:
+    """객체를 콘솔이 스트리밍 프록시 — 내부 S3 엔드포인트라도 브라우저 다운로드 가능.
+
+    presigned URL이 내부 주소(minio:9000)를 가리켜 브라우저가 못 받는 경우의 대안.
+    """
+    try:
+        obj = get_s3_client().get_object(Bucket=bucket, Key=key)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(404, f"객체 조회 실패: {exc}") from exc
+    filename = key.rsplit("/", 1)[-1] or "download"
+    return StreamingResponse(
+        obj["Body"].iter_chunks(),
+        media_type=obj.get("ContentType") or "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

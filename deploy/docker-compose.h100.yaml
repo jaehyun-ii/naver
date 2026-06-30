@@ -30,6 +30,12 @@ services:
       /bin/sh -c "until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 2; done;
       mc mb -p local/dev-demo-models local/dev-demo-datasets local/dev-shared-eval; echo buckets ready"
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"      # OTLP gRPC(:4317)/HTTP(:4318) 수신
+    ports: ["26686:16686", "24317:4317"]  # 26686=Query UI(직접 접근 시), 콘솔은 내부망으로
+
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.14.0
     depends_on: [postgres, minio]
@@ -48,7 +54,7 @@ services:
 
   console:
     image: llmops/core:x86
-    depends_on: [postgres, mlflow, minio]
+    depends_on: [postgres, mlflow, minio, jaeger]
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"          # real 모드 오케스트레이션(사용자 허용)
       - "/raid/workspace/jaehyun:/raid/workspace/jaehyun"      # 워크스페이스(호스트 경로 = 컨테이너 경로)
@@ -62,6 +68,9 @@ services:
       LLMOPS_S3__ENDPOINT_URL: http://minio:9000
       LLMOPS_S3__ACCESS_KEY: minioadmin
       LLMOPS_S3__SECRET_KEY: minioadmin
+      # 콘솔 통합 뷰 — Jaeger 트레이스(송출 OTLP + 조회 Query API)
+      LLMOPS_TELEMETRY__OTLP_ENDPOINT: http://jaeger:4317
+      LLMOPS_TELEMETRY__JAEGER_QUERY_URL: http://jaeger:16686
       LLMOPS_EXEC__WORK_DIR: /raid/workspace/jaehyun/runs
       LLMOPS_EXEC__HF_CACHE: /raid/workspace/jaehyun/hf/hub
       LLMOPS_EXEC__REPO_DIR: /raid/workspace/jaehyun/naver/llmops_core

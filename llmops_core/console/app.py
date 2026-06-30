@@ -11,6 +11,7 @@ OpenAI 호환 게이트웨이(gateway/app.py)와 별개의 제어평면 콘솔�
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -40,7 +41,19 @@ from llmops_core.console.routers import (
     tuning,
 )
 
-app = FastAPI(title="llmops-core console", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 챗 등 LLM 호출 스팬을 Jaeger로 송출(통합 트레이스 뷰). OTel 미가용 시 graceful.
+    try:
+        from llmops_core.telemetry import init_telemetry
+
+        init_telemetry()
+    except Exception:  # noqa: BLE001
+        pass
+    yield
+
+
+app = FastAPI(title="llmops-core console", version="0.1.0", lifespan=lifespan)
 
 # 개발 편의: 프론트 dev 서버(Vite 등)에서의 호출 허용
 app.add_middleware(

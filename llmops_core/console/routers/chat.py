@@ -9,9 +9,10 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from llmops_core.common.errors import AuthError, PolicyViolation
-from llmops_core.common.schemas import ChatCompletionRequest
+from llmops_core.common.schemas import ChatCompletionRequest, Usage
 from llmops_core.console.schemas import ChatBody, ChatReply
 from llmops_core.console.services import services
+from llmops_core.telemetry import llm_span, record_usage
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -51,29 +52,32 @@ async def chat(body: ChatBody) -> ChatReply:
     except PolicyViolation as exc:
         raise HTTPException(429, str(exc)) from exc
 
-    # 3) 백엔드 호출 (litellm Router → 실패 시 에코)
-    reply = _echo(body.messages, body.model)
-    try:
-        from llmops_core.gateway.router import GatewayRouter
+    # 3) 백엔드 호출 (litellm Router → 실패 시 에코) — OTel 스팬으로 트레이싱(Jaeger 통합 뷰)
+    with llm_span(body.model, tenant=ctx, temperature=body.temperature) as span:
+        reply = _echo(body.messages, body.model)
+        try:
+            from llmops_core.gateway.router import GatewayRouter
 
-        req = ChatCompletionRequest(
-            model=body.model,
-            messages=body.messages,
-            temperature=body.temperature,
-            max_tokens=body.max_tokens,
-        )
-        router_ = GatewayRouter()
-        raw, usage, cache_hit = await router_.acompletion(req)
-        cost = 0.0 if cache_hit else router_.estimate_cost(body.model, usage)
-        reply = ChatReply(
-            content=raw["choices"][0]["message"]["content"],
-            model=raw.get("model", body.model),
-            backend="router",
-            usage=usage.model_dump(),
-            cost_usd=cost,
-        )
-    except Exception:  # noqa: BLE001 — litellm 미설치/백엔드 미가용 시 에코 폴백
-        pass
+            req = ChatCompletionRequest(
+                model=body.model,
+                messages=body.messages,
+                temperature=body.temperature,
+                max_tokens=body.max_tokens,
+            )
+            router_ = GatewayRouter()
+            raw, usage, cache_hit = await router_.acompletion(req)
+            cost = 0.0 if cache_hit else router_.estimate_cost(body.model, usage)
+            reply = ChatReply(
+                content=raw["choices"][0]["message"]["content"],
+                model=raw.get("model", body.model),
+                backend="router",
+                usage=usage.model_dump(),
+                cost_usd=cost,
+            )
+        except Exception:  # noqa: BLE001 — litellm 미설치/백엔드 미가용 시 에코 폴백
+            pass
+        record_usage(span, Usage(**reply.usage), response_model=reply.model,
+                     cost_usd=reply.cost_usd)
 
     # 4) 비용 반영 (예산 통제)
     svc.policy.record_spend(ctx, reply.cost_usd)

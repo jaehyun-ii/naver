@@ -1174,7 +1174,13 @@ function Storage({ master }) {
   useEffect(()=>{ if(master) api("/api/storage/buckets",{master}).then(setBk).catch(e=>setErr(e.message)); },[master]);
   const open = async (b) => { setSel(b);
     try { setObjs(await api(`/api/storage/objects?bucket=${encodeURIComponent(b)}`,{master})); } catch(e){ setErr(e.message); } };
-  const dl = async (b,k) => { try { const r=await api(`/api/storage/presign?bucket=${encodeURIComponent(b)}&key=${encodeURIComponent(k)}`,{master}); if(r.url) window.open(r.url,"_blank"); } catch(e){ setErr(e.message); } };
+  const dl = async (b,k) => { try {
+    const res = await fetch(`/api/storage/download?bucket=${encodeURIComponent(b)}&key=${encodeURIComponent(k)}`,{headers:{"X-Master-Key":master}});
+    if(!res.ok){ setErr("다운로드 실패: "+res.status); return; }
+    const blob = await res.blob(); const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href=url; a.download=k.split("/").pop()||"download"; a.click();
+    URL.revokeObjectURL(url);
+  } catch(e){ setErr(e.message); } };
   const kb = (n)=> n>1048576?(n/1048576).toFixed(1)+"MB":n>1024?(n/1024).toFixed(1)+"KB":n+"B";
   return (<div>
     <h2>스토리지 (MinIO/S3 통합)</h2>
