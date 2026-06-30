@@ -192,10 +192,10 @@ uvicorn llmops_core.console.app:app --reload --port 4100
 
 ### 서빙 가드레일 (`gateway/guardrails.py`)
 - **입력**: 프롬프트 인젝션 차단(한/영 휴리스틱) + **선택적 모델 분류**(`LLMOPS_GUARDRAILS__MODEL`=논리명, 예: LlamaGuard). 휴리스틱과 OR 결합, 모델 미가용 시 fail-open.
-- **출력**: 금칙어·PII(Presidio) 모더레이션. 콘솔 **가드레일·안전** 탭에서 점검(`/api/safety/guardrail/check`, 분류 모델 즉석 선택).
+- **출력**: 금칙어 차단 + **(옵션) PII 마스킹**(`mask_output_pii`, 기본 off·Presidio 필요). 콘솔 **가드레일·안전** 탭에서 점검(`/api/safety/guardrail/check`, 분류 모델 즉석 선택).
 
 ### 응답 캐싱 (litellm 네이티브)
-`litellm.Cache`(local/redis/시맨틱)를 Router에 임베드 — 동일 요청 재사용 시 `cost=0`. 히트율 `/admin/cache/stats`(콘솔 안전 탭에 라이브 표시). 설정 `LLMOPS_CACHE__*`.
+`litellm.Cache`(현재 **local/redis** 연결, 시맨틱 캐시는 litellm 지원이나 미활성)를 Router에 임베드 — 동일 요청 재사용 시 `cost=0`. 히트율 `/admin/cache/stats`(콘솔 안전 탭에 라이브 표시). 설정 `LLMOPS_CACHE__*`.
 
 ### 평가 = 서빙 정합
 평가가 서빙과 같은 프롬프트·RAG를 적용하도록 보강. `evaluation.local_eval`:
