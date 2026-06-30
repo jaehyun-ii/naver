@@ -185,7 +185,7 @@ uvicorn llmops_core.console.app:app --reload --port 4100
 
 ## 서빙 운영 보강 — RAG 서빙·가드레일·캐시·평가정합·벤치마크
 
-일반 LLMOps 구성요소를 보강하고, **평가가 서빙과 동일 경로로 측정**되도록 정합시켰다(H100 검증, 테스트 120개 통과).
+일반 LLMOps 구성요소를 보강하고, **평가가 서빙과 동일 경로로 측정**되도록 정합시켰다(H100 검증).
 
 ### RAG 서빙 (런타임 검색→컨텍스트 주입)
 `rag/`에 임베더(설정 `LLMOPS_RAG__EMBEDDER`: `bge-m3` | 무의존 `hashing` 폴백)·인메모리 벡터스토어(디스크 영속, 또는 `backend=qdrant`)·`RagPipeline`을 추가. 게이트웨이가 요청을 검색·주입한다(설정 `LLMOPS_RAG__SERVING_ENABLED=true` 또는 요청별 `extra.rag`). 콘솔 **RAG 지식베이스** 탭(`/api/rag` 색인·검색·증강 미리보기). 기존 llama_index/Qdrant 헤비 경로와 공존.
@@ -204,7 +204,7 @@ uvicorn llmops_core.console.app:app --reload --port 4100
 파이프라인 탭/`RunPipelineBody`에 `prompt_name`·`use_rag` 노출.
 
 ### 벤치마크 데이터셋 평가
-명명·고정된 평가셋(벤치마크)에 서빙 모델(논리명)을 돌려 표준 reference 메트릭 산출, 같은 벤치마크로 여러 모델을 **리더보드**로 비교(judge 불필요). `evaluation/benchmark.py` + `/api/benchmark`(등록·실행·결과), 콘솔 **벤치마크 평가** 탭. 모델 추론은 게이트웨이(`ModelClient`) 경유 → 백엔드 무관.
+명명·고정된 평가셋(벤치마크)에 모델을 돌려 표준 메트릭을 산출하고, 같은 벤치마크로 여러 모델을 **리더보드**로 비교한다. 두 유형 — **reference**(질문→생성→정답대비 `answer_match`·`reference_f1`, 게이트웨이 경유)와 **preference**(`{prompt,chosen,rejected}` 선호정확도, 컨테이너 logprob 평가). `evaluation/benchmark.py` + `/api/benchmark`(등록·실행·결과), 콘솔 **벤치마크 평가** 탭. 모델 선택은 `model_list.yaml` 논리명/base id → 백엔드 무관.
 
 ### 가드레일·벤치마크 모델 선택
 **`config/model_list.yaml`의 논리 모델명**으로 선택 → 게이트웨이가 백엔드 라우팅(`common/model_client.py` 공용 클라이언트). 콘솔 드롭다운(안전=가드레일 분류기, 벤치마크=평가 대상 모델).
