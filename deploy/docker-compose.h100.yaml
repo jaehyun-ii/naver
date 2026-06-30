@@ -48,7 +48,7 @@ services:
 
   console:
     image: llmops/core:x86
-    depends_on: [postgres, mlflow]
+    depends_on: [postgres, mlflow, minio]
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"          # real 모드 오케스트레이션(사용자 허용)
       - "/raid/workspace/jaehyun:/raid/workspace/jaehyun"      # 워크스페이스(호스트 경로 = 컨테이너 경로)
@@ -58,6 +58,10 @@ services:
       LLMOPS_STORE__BACKEND: postgres
       LLMOPS_STORE__DSN: postgresql://mlflow:mlflow@postgres:5432/mlflow
       LLMOPS_MLFLOW__TRACKING_URI: http://mlflow:5000
+      # 콘솔 통합 뷰 — MinIO 스토리지 조회(컨테이너 네트워크 서비스명)
+      LLMOPS_S3__ENDPOINT_URL: http://minio:9000
+      LLMOPS_S3__ACCESS_KEY: minioadmin
+      LLMOPS_S3__SECRET_KEY: minioadmin
       LLMOPS_EXEC__WORK_DIR: /raid/workspace/jaehyun/runs
       LLMOPS_EXEC__HF_CACHE: /raid/workspace/jaehyun/hf/hub
       LLMOPS_EXEC__REPO_DIR: /raid/workspace/jaehyun/naver/llmops_core
