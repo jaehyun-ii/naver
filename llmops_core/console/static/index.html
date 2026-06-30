@@ -1131,17 +1131,112 @@ function Safety({ master }) {
   );
 }
 
+// ── MLflow 통합 뷰 (실험·런·모델 레지스트리) ──
+function Tracking({ master }) {
+  const [exps, setExps] = useState(null); const [exp, setExp] = useState("");
+  const [runs, setRuns] = useState([]); const [models, setModels] = useState(null);
+  const [err, setErr] = useState("");
+  useEffect(()=>{ if(!master) return;
+    api("/api/tracking/experiments",{master}).then(d=>{ setExps(d); if(d.available&&d.experiments[0]) setExp(d.experiments[0].id); }).catch(e=>setErr(e.message));
+    api("/api/tracking/models",{master}).then(setModels).catch(()=>{});
+  },[master]);
+  useEffect(()=>{ if(master&&exp) api(`/api/tracking/runs?experiment_id=${exp}`,{master}).then(d=>setRuns(d.available?d.runs:[])).catch(()=>{}); },[master,exp]);
+  return (<div>
+    <h2>실험·모델 (MLflow 통합)</h2>
+    <div className="sub">MLflow UI 없이 콘솔에서 실험 런·메트릭·모델 레지스트리를 조회. {exps&&exps.tracking_uri&&<span className="mono">{exps.tracking_uri}</span>}</div>
+    {err&&<div className="err">⚠ {err}</div>}
+    {exps&&!exps.available&&<div className="card muted">MLflow 미도달: {exps.error}</div>}
+    {exps&&exps.available&&<div className="card">
+      <div className="bar"><b>실험</b>
+        <select value={exp} onChange={e=>setExp(e.target.value)}>
+          {exps.experiments.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
+      <table style={{marginTop:8}}><thead><tr><th>run</th><th>상태</th><th>메트릭</th><th>태그</th></tr></thead>
+      <tbody>{runs.map((r,i)=><tr key={i}><td className="mono">{r.run_id.slice(0,8)}</td><td>{r.status}</td>
+        <td className="kv">{Object.entries(r.metrics).map(([k,v])=>`${k}=${typeof v==="number"?v.toFixed(3):v}`).join(", ")}</td>
+        <td className="kv">{Object.entries(r.tags).map(([k,v])=>`${k}=${v}`).join(", ")}</td></tr>)}
+      {!runs.length&&<tr><td colSpan="4" className="muted">런 없음</td></tr>}</tbody></table>
+    </div>}
+    <div className="card"><b>모델 레지스트리</b>
+      {models&&!models.available&&<div className="muted">미도달: {models.error}</div>}
+      {models&&models.available&&<table style={{marginTop:8}}><thead><tr><th>모델</th><th>버전(스테이지)</th><th>alias</th></tr></thead>
+        <tbody>{models.models.map((m,i)=><tr key={i}><td className="mono">{m.name}</td>
+          <td className="kv">{m.versions.map(v=>`v${v.version}(${v.stage})`).join(", ")}</td>
+          <td className="kv">{Object.entries(m.aliases).map(([a,v])=>`${a}→v${v}`).join(", ")||"-"}</td></tr>)}
+        {!models.models.length&&<tr><td colSpan="3" className="muted">등록 모델 없음</td></tr>}</tbody></table>}
+    </div>
+  </div>);
+}
+
+// ── MinIO 통합 뷰 (버킷·객체 브라우저) ──
+function Storage({ master }) {
+  const [bk, setBk] = useState(null); const [sel, setSel] = useState("");
+  const [objs, setObjs] = useState(null); const [err, setErr] = useState("");
+  useEffect(()=>{ if(master) api("/api/storage/buckets",{master}).then(setBk).catch(e=>setErr(e.message)); },[master]);
+  const open = async (b) => { setSel(b);
+    try { setObjs(await api(`/api/storage/objects?bucket=${encodeURIComponent(b)}`,{master})); } catch(e){ setErr(e.message); } };
+  const dl = async (b,k) => { try { const r=await api(`/api/storage/presign?bucket=${encodeURIComponent(b)}&key=${encodeURIComponent(k)}`,{master}); if(r.url) window.open(r.url,"_blank"); } catch(e){ setErr(e.message); } };
+  const kb = (n)=> n>1048576?(n/1048576).toFixed(1)+"MB":n>1024?(n/1024).toFixed(1)+"KB":n+"B";
+  return (<div>
+    <h2>스토리지 (MinIO/S3 통합)</h2>
+    <div className="sub">MinIO 콘솔 없이 버킷·객체를 탐색하고 다운로드. presigned URL은 브라우저 도달 가능 엔드포인트 전제.</div>
+    {err&&<div className="err">⚠ {err}</div>}
+    {bk&&!bk.available&&<div className="card muted">스토리지 미도달: {bk.error}</div>}
+    {bk&&bk.available&&<div className="grid2">
+      <div className="card"><b>버킷</b>
+        <table style={{marginTop:8}}><tbody>{bk.buckets.map((b,i)=><tr key={i}>
+          <td><button className="btn ghost" style={{padding:"2px 8px"}} onClick={()=>open(b.name)}>{b.name}</button></td></tr>)}
+          {!bk.buckets.length&&<tr><td className="muted">버킷 없음</td></tr>}</tbody></table></div>
+      <div className="card"><b>객체 {sel&&<span className="mono">{sel}</span>}</b>
+        {objs&&objs.available&&<table style={{marginTop:8}}><thead><tr><th>키</th><th>크기</th><th></th></tr></thead>
+          <tbody>{objs.objects.map((o,i)=><tr key={i}><td className="mono" style={{fontSize:11}}>{o.key}</td><td>{kb(o.size)}</td>
+            <td><button className="btn ghost" style={{padding:"1px 6px"}} onClick={()=>dl(sel,o.key)}>↓</button></td></tr>)}
+          {!objs.objects.length&&<tr><td colSpan="3" className="muted">객체 없음</td></tr>}</tbody></table>}
+        {!objs&&<div className="muted">버킷을 선택하세요</div>}</div>
+    </div>}
+  </div>);
+}
+
+// ── Jaeger 통합 뷰 (LLM 트레이스) ──
+function Traces({ master }) {
+  const [svc, setSvc] = useState(null); const [sel, setSel] = useState("");
+  const [tr, setTr] = useState([]); const [detail, setDetail] = useState(null); const [err, setErr] = useState("");
+  useEffect(()=>{ if(!master) return;
+    api("/api/traces/services",{master}).then(d=>{ setSvc(d); if(d.available&&d.services[0]) setSel(d.services[0]); }).catch(e=>setErr(e.message)); },[master]);
+  useEffect(()=>{ if(master&&sel) api(`/api/traces?service=${encodeURIComponent(sel)}`,{master}).then(d=>setTr(d.available?d.traces:[])).catch(()=>{}); },[master,sel]);
+  const showDetail = async (id)=>{ try { setDetail(await api(`/api/traces/${id}`,{master})); } catch(e){ setErr(e.message); } };
+  return (<div>
+    <h2>트레이스 (Jaeger 통합)</h2>
+    <div className="sub">Jaeger UI 없이 LLM 호출 트레이스(지연·토큰·비용·에러)를 조회.</div>
+    {err&&<div className="err">⚠ {err}</div>}
+    {svc&&!svc.available&&<div className="card muted">Jaeger 미도달({svc.jaeger}): {svc.error}</div>}
+    {svc&&svc.available&&<div className="card">
+      <div className="bar"><b>서비스</b>
+        <select value={sel} onChange={e=>setSel(e.target.value)}>{svc.services.map(s=><option key={s} value={s}>{s}</option>)}</select></div>
+      <table style={{marginTop:8}}><thead><tr><th>trace</th><th>작업</th><th>스팬</th><th>지연(ms)</th><th>토큰</th><th>비용</th><th></th></tr></thead>
+      <tbody>{tr.map((t,i)=><tr key={i}><td className="mono">{(t.traceID||"").slice(0,8)}</td><td>{t.root}</td><td>{t.spans}</td>
+        <td>{t.duration_ms}{t.error&&<span style={{color:"var(--err)"}}> ⚠</span>}</td><td>{t.total_tokens||"-"}</td><td>{t.cost_usd!=null?"$"+t.cost_usd:"-"}</td>
+        <td><button className="btn ghost" style={{padding:"1px 6px"}} onClick={()=>showDetail(t.traceID)}>상세</button></td></tr>)}
+      {!tr.length&&<tr><td colSpan="7" className="muted">트레이스 없음</td></tr>}</tbody></table>
+      {detail&&detail.available&&<div style={{marginTop:10}}>
+        <div className="muted">스팬</div>
+        {detail.spans.map((s,i)=><div key={i} className="kv" style={{paddingLeft:8}}>· {s.op} <b>{s.duration_ms}ms</b> {Object.entries(s.tags).map(([k,v])=>`${k}=${v}`).join(" ")}</div>)}</div>}
+    </div>}
+  </div>);
+}
+
 // ── App shell ──
 const NAV_GROUPS = [
   ["쉬운 시작", [["home","🏠 시작하기"],["wizard","🚀 가이드 실행"],["play","💬 모델 사용(플레이그라운드)"]]],
   ["고급 · 데이터/학습", [["data","데이터셋"],["pipe","파이프라인(직접 실행)"],["hpo","파라미터 최적화"],["prompt","프롬프트"]]],
   ["고급 · 서빙/안전", [["rag","RAG 지식베이스"],["safety","가드레일·안전"]]],
   ["고급 · 운영/품질", [["evalv","버전별 성능"],["drift","드리프트 탐지"],["serving","서빙·카나리"],["dash","대시보드·GPU"]]],
+  ["관측·자산 (통합 뷰)", [["mlflow","실험·모델"],["storage","스토리지"],["traces","트레이스"]]],
   ["고급 · 거버넌스", [["rel","승인·평가"],["keys","테넌트 키"],["sec","보안·RBAC/감사"]]],
 ];
 const VIEWS = { home:Home, wizard:Wizard, play:Playground, data:Data, pipe:Pipeline, hpo:HPO,
   prompt:Prompts, rag:RagView, safety:Safety, evalv:EvalVersions, drift:Drift, serving:Serving,
-  dash:Dashboard, rel:Releases, keys:Keys, sec:Security };
+  dash:Dashboard, mlflow:Tracking, storage:Storage, traces:Traces,
+  rel:Releases, keys:Keys, sec:Security };
 // 한 탭의 렌더/런타임 오류가 전체를 빈 화면으로 만들지 않도록 격리(graceful degradation).
 class ErrorBoundary extends React.Component {
   constructor(p){ super(p); this.state = { err:null }; }

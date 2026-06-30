@@ -98,6 +98,8 @@ class TelemetrySettings(BaseModel):
     langfuse_host: str = "http://localhost:3000"
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
+    # 콘솔이 트레이스를 조회할 Jaeger Query API(메인 콘솔 통합 뷰). 컴포즈에선 서비스명.
+    jaeger_query_url: str = "http://localhost:16686"
 
 
 class QdrantSettings(BaseModel):

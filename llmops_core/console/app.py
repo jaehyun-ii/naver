@@ -34,6 +34,9 @@ from llmops_core.console.routers import (
     releases,
     safety,
     serving,
+    storage,
+    tracking,
+    traces,
     tuning,
 )
 
@@ -63,6 +66,9 @@ app.include_router(serving.router)
 app.include_router(drift.router)
 app.include_router(rag.router)
 app.include_router(safety.router)
+app.include_router(tracking.router)
+app.include_router(storage.router)
+app.include_router(traces.router)
 
 
 @app.get("/api/health")
