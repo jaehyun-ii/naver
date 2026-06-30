@@ -83,6 +83,7 @@ docker compose -f deploy/docker-compose.yaml down               # 정리
 | MinIO 콘솔 | http://localhost:19001 | minioadmin / minioadmin |
 | Jaeger UI | http://localhost:16686 | LLM 트레이스 |
 
+- **단일 콘솔 통합 뷰**: MLflow·MinIO·Jaeger UI를 따로 띄우지 않고 메인 콘솔(:4100)의 **관측·자산** 그룹에서 조회 — 실험·모델(`/api/tracking`), 스토리지(`/api/storage`), 트레이스(`/api/traces`). 콘솔이 각 API를 읽기전용 프록시(미도달 시 graceful). 외부 UI 포트는 필요 시 닫아도 됨(백엔드는 유지). 깊은 분석은 외부 UI를 직접 열어 보완.
 - 코어 앱은 `deploy/app/Dockerfile`(단일 이미지 `llmops/core:latest`)을 게이트웨이/콘솔 두 서비스로 재사용.
 - 호스트 포트 충돌 회피로 게이트웨이=14000, MinIO=19000/19001로 매핑(컨테이너 내부·서비스명 네트워킹은 4000/9000 유지).
 - 게이트웨이가 실제 모델로 라우팅하려면 `config/model_list.yaml`의 `api_base`를 컨테이너 네트워크 기준으로(`http://serving:8000/v1` 또는 호스트 서버면 `http://host.docker.internal:8000/v1`) 설정. 미설정 시 콘솔 챗은 echo 백엔드로 동작.
