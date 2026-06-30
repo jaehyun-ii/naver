@@ -32,6 +32,32 @@ class CompareBody(BaseModel):
     variants: list[str] = Field(default_factory=list)  # 시스템 프롬프트 변형
 
 
+@router.get("/catalog")
+def catalog() -> list[dict]:
+    """시스템이 사용하는 특수 프롬프트(judge·가드레일·RAG) — 이름·변수·기본 템플릿.
+
+    프론트가 이 이름으로 버전을 생성·prod 승격하면 코드 수정 없이 동작이 바뀐다.
+    설정으로 이름을 바꿀 수 있으므로 현재 설정값을 함께 반환.
+    """
+    from llmops_core.common.config import get_settings
+    from llmops_core.evaluation.judge import DEFAULT_JUDGE_PROMPT
+    from llmops_core.gateway.guardrails import DEFAULT_CLASSIFIER_PROMPT
+    from llmops_core.rag.pipeline import _DEFAULT_SYSTEM
+
+    s = get_settings()
+    return [
+        {"key": "judge", "title": "LLM-judge 채점", "name": s.evaluation.judge_prompt_name,
+         "vars": ["q", "ref", "ans"], "default": DEFAULT_JUDGE_PROMPT,
+         "desc": "judge 모델이 답변을 0~1로 채점하는 프롬프트"},
+        {"key": "guardrail", "title": "가드레일 분류", "name": s.guardrails.prompt_name,
+         "vars": ["text"], "default": DEFAULT_CLASSIFIER_PROMPT,
+         "desc": "입력을 safe/unsafe로 분류하는 가드레일 모델 프롬프트"},
+        {"key": "rag", "title": "RAG 컨텍스트 지시", "name": "rag-system",
+         "vars": ["context"], "default": _DEFAULT_SYSTEM,
+         "desc": "RAG 검색 컨텍스트를 모델에 지시하는 시스템 프롬프트(증강 엔드포인트)"},
+    ]
+
+
 @router.get("")
 def list_prompts() -> list[dict]:
     store = services().prompts

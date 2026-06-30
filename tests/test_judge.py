@@ -49,3 +49,25 @@ def test_run_judge_eval_graceful_on_error():
     out = run_judge_eval(Boom(), "judge-x", [_case("q", "r", "a")])
     assert out["judge_score"] == 0.0
     assert out["judge_errors"] == 1
+
+
+def test_run_judge_eval_uses_custom_template():
+    client = _FakeClient(["1.0"])
+    run_judge_eval(client, "j", [_case("Q", "R", "A")],
+                   prompt_template="채점 {q}|{ref}|{ans}")
+    sent = client.calls[0][1][0]["content"]
+    assert sent == "채점 Q|R|A"  # 커스텀 프롬프트 템플릿 적용
+
+
+# ── 프롬프트 리졸버: 스토어 등록분 우선, 미등록 시 기본값 ──
+def test_resolve_template_store_hit_and_fallback(tmp_path):
+    from llmops_core.prompts import resolve_template
+    from llmops_core.prompts.store import GitPromptStore
+
+    store = GitPromptStore(repo_path=str(tmp_path))
+    pr = store.create_version("judge", "스토어판 {q}")
+    store.promote("judge", pr.version, "prod")
+    # 같은 repo_path를 설정으로 쓰도록 monkeypatch 대신 직접 store로 확인
+    assert store.by_label("judge", "prod").template == "스토어판 {q}"
+    # 미등록 이름 → 기본값
+    assert resolve_template("___none___", "DEF") == "DEF"

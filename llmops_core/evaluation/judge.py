@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-_JUDGE_PROMPT = (
+DEFAULT_JUDGE_PROMPT = (
     "당신은 엄정한 채점자입니다. 질문·정답(참고)·모델답변을 보고 모델답변의 정확성을 "
     "0.0~1.0으로 채점하세요. 0.0=완전히 틀림, 1.0=정답과 동등. 숫자만 한 줄로 답하세요.\n\n"
     "[질문]\n{q}\n[정답]\n{ref}\n[모델답변]\n{ans}\n점수:"
@@ -26,19 +26,21 @@ def parse_score(text: str) -> float:
     return max(0.0, min(1.0, v))
 
 
-def run_judge_eval(client, judge_model: str, cases) -> dict:
+def run_judge_eval(client, judge_model: str, cases, prompt_template: str | None = None) -> dict:
     """각 케이스(question/expected/answer)를 judge 모델로 채점 → 평균 점수.
 
     client.complete(model, messages) 인터페이스(common.model_client.ModelClient 호환).
+    prompt_template(미지정 시 DEFAULT_JUDGE_PROMPT)은 {q}{ref}{ans} 변수를 받는다.
     모델 호출 실패는 0.0으로 처리(graceful) 후 실패 수를 함께 보고.
     """
+    template = prompt_template or DEFAULT_JUDGE_PROMPT
     scores: list[float] = []
     errors = 0
     for c in cases:
         q = getattr(c, "question", "") or ""
         ref = getattr(c, "expected", "") or ""
         ans = getattr(c, "answer", "") or ""
-        msgs = [{"role": "user", "content": _JUDGE_PROMPT.format(q=q, ref=ref, ans=ans)}]
+        msgs = [{"role": "user", "content": template.format(q=q, ref=ref, ans=ans)}]
         try:
             txt = client.complete(judge_model, msgs, temperature=0.0, max_tokens=8)
             scores.append(parse_score(txt))

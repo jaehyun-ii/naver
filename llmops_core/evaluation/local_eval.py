@@ -194,6 +194,8 @@ def main() -> None:
                    help="RAG 벡터스토어 경로(미지정 시 설정 rag.persist_path)")
     p.add_argument("--judge-model", default=None,
                    help="LLM-as-judge 모델(model_list.yaml 논리명). 지정 시 judge_score 추가")
+    p.add_argument("--judge-prompt-name", default=None,
+                   help="judge 채점 프롬프트 이름(GitPromptStore). 미지정 시 설정값→내장 기본값")
     args = p.parse_args()
 
     system, prompt_meta = _resolve_system_prompt(args)
@@ -225,13 +227,17 @@ def main() -> None:
     metrics = run_reference_metrics(scored)
     judge_meta = None
     if args.judge_model:
+        from llmops_core.common.config import get_settings
         from llmops_core.common.model_client import get_model_client
-        from llmops_core.evaluation.judge import run_judge_eval
+        from llmops_core.evaluation.judge import DEFAULT_JUDGE_PROMPT, run_judge_eval
+        from llmops_core.prompts import resolve_template
 
+        pname = args.judge_prompt_name or get_settings().evaluation.judge_prompt_name
+        template = resolve_template(pname, DEFAULT_JUDGE_PROMPT)
         try:
-            jm = run_judge_eval(get_model_client(), args.judge_model, scored)
+            jm = run_judge_eval(get_model_client(), args.judge_model, scored, template)
             metrics["judge_score"] = jm["judge_score"]
-            judge_meta = {"model": args.judge_model, "n": jm["judge_n"],
+            judge_meta = {"model": args.judge_model, "prompt": pname, "n": jm["judge_n"],
                           "errors": jm["judge_errors"]}
         except Exception as exc:  # noqa: BLE001 — judge 모델 미가용 시 graceful
             judge_meta = {"model": args.judge_model, "error": str(exc)}
