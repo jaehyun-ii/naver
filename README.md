@@ -16,14 +16,14 @@
 
 ```
 llmops_core/
-├─ common/         # 설정·인증·S3(boto3)·공통 스키마·모델클라이언트(가드레일/judge 공용) [핵심 글루]
+├─ common/         # 설정·인증·S3(boto3)·공통 스키마·모델클라이언트(가드레일/벤치마크 공용) [핵심 글루]
 ├─ ingestion/      # pyspark 잡 + 정규화/정확중복 + S3 JSONL io  [L1 Embed]
 ├─ quality/        # PII(Presidio)·언어(fastText)·근사중복·검증게이트·Argilla [L1·L2]
 ├─ dataset/        # SFT/Preference 변환·결정적분할·핑거프린트·DVC [L3 Embed]
 ├─ telemetry/      # OTel SDK + LLM 스팬 시맨틱 규약        [Embed]
 ├─ gateway/        # litellm.Router + 가상키/예산/정책 + 가드레일 + 응답캐시(litellm) + FastAPI [Embed]
-├─ prompts/        # Git-backed 프롬프트 스토어(버전·라벨·롤백) + judge·가드레일 프롬프트 해석
-├─ evaluation/     # reference/preference 로컬평가 + LLM-as-judge + 게이트 + 추론(predict) [Embed]
+├─ prompts/        # Git-backed 프롬프트 스토어(버전·라벨·롤백) + 가드레일·RAG 프롬프트 해석
+├─ evaluation/     # reference/preference 로컬평가 + 벤치마크 + 게이트 + 추론(predict) [Embed]
 ├─ governance/     # Release Gateway(배포 2차 승인 게이트)   [Build]
 ├─ orchestration/  # langchain-core 프리미티브 기반 체인     [Primitive]
 ├─ rag/            # 서빙: 임베더(bge-m3/해시폴백)·인메모리스토어·증강 / 헤비: llama_index.core+qdrant [Embed+Service]
@@ -183,7 +183,7 @@ uvicorn llmops_core.console.app:app --reload --port 4100
 | **NCP 하이브리드 스토리지** | `LLMOPS_S3__PROVIDER=ncp` (엔드포인트 자동 전환) | ✅ S3 seam 검증(MinIO), NCP는 크레덴셜만 |
 | **서빙 마이크로배칭** | `serving.batching.MicroBatcher` | ✅ 유틸 + 단위테스트 (처리량 상한은 vLLM) |
 
-## 서빙 운영 보강 — RAG 서빙·가드레일·캐시·평가정합·LLM-judge
+## 서빙 운영 보강 — RAG 서빙·가드레일·캐시·평가정합·벤치마크
 
 일반 LLMOps 구성요소를 보강하고, **평가가 서빙과 동일 경로로 측정**되도록 정합시켰다(H100 검증, 테스트 120개 통과).
 
@@ -201,15 +201,16 @@ uvicorn llmops_core.console.app:app --reload --port 4100
 평가가 서빙과 같은 프롬프트·RAG를 적용하도록 보강. `evaluation.local_eval`:
 - `--system-prompt` / `--prompt-name`(GitPromptStore prod 프롬프트) — 서빙 프롬프트로 평가.
 - `--rag` — 서빙과 동일 `RagPipeline.compose_system`으로 컨텍스트 주입.
-- `--judge-model` — **LLM-as-judge** 채점(`judge_score`). 결정적 reference 메트릭과 병행.
+파이프라인 탭/`RunPipelineBody`에 `prompt_name`·`use_rag` 노출.
 
-파이프라인 탭/`RunPipelineBody`에 `prompt_name`·`use_rag`·`judge_model` 노출.
+### 벤치마크 데이터셋 평가
+명명·고정된 평가셋(벤치마크)에 서빙 모델(논리명)을 돌려 표준 reference 메트릭 산출, 같은 벤치마크로 여러 모델을 **리더보드**로 비교(judge 불필요). `evaluation/benchmark.py` + `/api/benchmark`(등록·실행·결과), 콘솔 **벤치마크 평가** 탭. 모델 추론은 게이트웨이(`ModelClient`) 경유 → 백엔드 무관.
 
-### 가드레일·judge 모델 선택
-둘 다 **`config/model_list.yaml`의 논리 모델명**으로 선택 → 게이트웨이가 백엔드 라우팅(`common/model_client.py` 공용 클라이언트). 콘솔 드롭다운(파이프라인=judge, 안전=가드레일 분류기).
+### 가드레일·벤치마크 모델 선택
+**`config/model_list.yaml`의 논리 모델명**으로 선택 → 게이트웨이가 백엔드 라우팅(`common/model_client.py` 공용 클라이언트). 콘솔 드롭다운(안전=가드레일 분류기, 벤치마크=평가 대상 모델).
 
-### judge·가드레일 프롬프트도 버전 자산
-하드코딩 대신 **GitPromptStore**로 관리 — `judge`(`{q}{ref}{ans}`)·`guardrail-classifier`(`{text}`)·`rag-system`(`{context}`). prod 라벨 등록 시 그것을, 없으면 내장 기본값(코드 수정 없이 prod 승격으로 동작 변경). 콘솔 **프롬프트** 탭 "시스템 특수 프롬프트" 표(`/api/prompts/catalog`)에서 편집·승격. 설정 `LLMOPS_GUARDRAILS__PROMPT_NAME`·`LLMOPS_EVALUATION__JUDGE_PROMPT_NAME`.
+### 가드레일·RAG 프롬프트도 버전 자산
+하드코딩 대신 **GitPromptStore**로 관리 — `guardrail-classifier`(`{text}`)·`rag-system`(`{context}`). prod 라벨 등록 시 그것을, 없으면 내장 기본값(코드 수정 없이 prod 승격으로 동작 변경). 콘솔 **프롬프트** 탭 "시스템 특수 프롬프트" 표(`/api/prompts/catalog`)에서 편집·승격. 설정 `LLMOPS_GUARDRAILS__PROMPT_NAME`.
 
 ### vLLM 처리량 경로
 transformers 서버는 레퍼런스/개발용. 프로덕션 처리량(PagedAttention·연속배칭·Multi-LoRA)은

@@ -85,6 +85,17 @@ class ConsoleServices:
             id_of=lambda d: d["name"], created_of=lambda d: d.get("created_at"),
             to_payload=lambda d: d, from_payload=lambda p: p,
         )
+        # 벤치마크(평가 데이터셋) — 이름 키. 결과는 (벤치마크,모델)별 누적
+        self.benchmarks = make_registry(
+            "benchmark",
+            id_of=lambda d: d["name"], created_of=lambda d: d.get("created_at"),
+            to_payload=lambda d: d, from_payload=lambda p: p,
+        )
+        self.benchmark_results = make_registry(
+            "benchmark_result",
+            id_of=lambda d: d["id"], created_of=lambda d: d.get("created_at"),
+            to_payload=lambda d: d, from_payload=lambda p: p,
+        )
 
 
 _services: ConsoleServices | None = None

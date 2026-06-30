@@ -249,7 +249,6 @@ def _pre_approval(svc, run: PipelineRun, body: RunPipelineBody) -> None:
             run.id, eval_cases, task=task,
             prompt_name=body.prompt_name, prompt_label=body.prompt_label,
             use_rag=body.use_rag, rag_top_k=body.rag_top_k,
-            judge_model=body.judge_model,
         )
         metrics = res["metrics"]
         num_cases = res.get("num_cases", len(eval_cases))
@@ -258,8 +257,6 @@ def _pre_approval(svc, run: PipelineRun, body: RunPipelineBody) -> None:
             applied.append(f"프롬프트={res['prompt']}")
         if res.get("rag"):
             applied.append(f"RAG={res['rag']}")
-        if res.get("judge"):
-            applied.append(f"judge={res['judge']}")
         if applied:
             ev.detail = " · ".join(applied)
         # DPO: 선호정확도(chosen>rejected) / SFT: answer_match(정답 핵심부 포함률)

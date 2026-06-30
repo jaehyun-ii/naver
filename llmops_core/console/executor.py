@@ -177,7 +177,6 @@ class RealExecutor:
         self, run_id: str, cases: list[dict], *, base_model: str | None = None,
         task: str = "reference", prompt_name: str | None = None,
         prompt_label: str = "prod", use_rag: bool = False, rag_top_k: int = 4,
-        judge_model: str | None = None,
     ) -> dict:
         """run_id의 어댑터로 cases를 평가 → {metrics, num_cases} 반환.
 
@@ -230,7 +229,6 @@ class RealExecutor:
             "--out", "/work/metrics.json",
             *prompt_args,
             *rag_args,
-            *(["--judge-model", judge_model] if judge_model else []),
         ]
         out = self._gpu_run(tail)
         # stdout 마지막 JSON 줄 파싱(견고하게)

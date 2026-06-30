@@ -146,13 +146,6 @@ class PromptStoreSettings(BaseModel):
     repo_path: str = "./prompt_store"
 
 
-class EvaluationSettings(BaseModel):
-    """평가 설정 — LLM-as-judge 프롬프트도 버전 자산으로 관리."""
-
-    # judge 채점 프롬프트 — GitPromptStore 이름(prod). 미등록 시 내장 기본값. 변수: {q}{ref}{ans}
-    judge_prompt_name: str = "judge"
-
-
 class ArgillaSettings(BaseModel):
     """라벨링 서버(Argilla) — Service. 코어는 argilla SDK만 임베드."""
 
@@ -194,7 +187,6 @@ class Settings(BaseSettings):
     store: StoreSettings = Field(default_factory=StoreSettings)
     orch: OrchestrationSettings = Field(default_factory=OrchestrationSettings)
     prompts: PromptStoreSettings = Field(default_factory=PromptStoreSettings)
-    evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
     argilla: ArgillaSettings = Field(default_factory=ArgillaSettings)
     data_quality: DataQualitySettings = Field(default_factory=DataQualitySettings)
 

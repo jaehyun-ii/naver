@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from llmops_core.console.routers import (
     audit,
     auth,
+    benchmark,
     chat,
     data,
     drift,
@@ -82,6 +83,7 @@ app.include_router(safety.router)
 app.include_router(tracking.router)
 app.include_router(storage.router)
 app.include_router(traces.router)
+app.include_router(benchmark.router)
 
 
 @app.get("/api/health")

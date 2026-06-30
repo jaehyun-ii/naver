@@ -25,8 +25,7 @@ class FakeExecutor:
             metrics = {"preference_accuracy": 1.0, "preference_margin": 0.5}
         else:
             metrics = {"answer_match": 1.0, "reference_f1": 0.9}
-        return {"metrics": metrics, "num_cases": len(cases), "prompt": None,
-                "rag": None, "judge": None}
+        return {"metrics": metrics, "num_cases": len(cases), "prompt": None, "rag": None}
 
     def merge(self, run_id, **kw):
         return f"/fake/runs/{run_id}/merged"
