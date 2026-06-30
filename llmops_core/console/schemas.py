@@ -117,3 +117,10 @@ class RunPipelineBody(BaseModel):
     served_name: str = "hcx-seed-tuned"  # 배포 시 게이트웨이 논리모델명
     train_max_steps: int = 30  # real 학습 step 상한(PoC 속도용; -1이면 epochs 사용)
     train_epochs: float = 1.0
+    # 평가에 적용할 시스템 프롬프트(GitPromptStore 프롬프트명) — 서빙과 동일 적용(평가=서빙 정합).
+    # None이면 프롬프트 없이 평가(기존 동작).
+    prompt_name: str | None = None
+    prompt_label: str = "prod"
+    # 평가에 RAG 검색·컨텍스트 주입 적용(서빙이 RAG 기반일 때). False면 미적용(기존 동작).
+    use_rag: bool = False
+    rag_top_k: int = 4

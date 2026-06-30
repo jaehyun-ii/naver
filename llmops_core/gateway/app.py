@@ -17,6 +17,8 @@ from llmops_core.common.config import get_settings
 from llmops_core.common.errors import AuthError, PolicyViolation
 from llmops_core.common.schemas import ChatCompletionRequest, TenantContext
 from llmops_core.common.stores import make_key_store, make_ledger
+from llmops_core.gateway.cache import CacheStats
+from llmops_core.gateway.guardrails import GuardrailEngine
 from llmops_core.gateway.keys import VirtualKeyStore
 from llmops_core.gateway.policy import PolicyEngine
 from llmops_core.gateway.router import GatewayRouter
@@ -25,7 +27,27 @@ from llmops_core.telemetry import init_telemetry, llm_span, record_usage
 # ── 의존 컴포넌트 (store.backend=postgres면 Postgres 영속, 게이트웨이↔콘솔 상태 공유) ──
 key_store: VirtualKeyStore = make_key_store()
 policy = PolicyEngine(ledger=make_ledger())
+guardrails = GuardrailEngine()
+cache_stats = CacheStats(enabled=get_settings().cache.enabled)
 _router: GatewayRouter | None = None
+_rag = None  # 서빙 RAG 파이프라인(필요 시 lazy)
+
+
+def get_rag():
+    global _rag
+    if _rag is None:
+        from llmops_core.rag import RagPipeline
+
+        _rag = RagPipeline()
+    return _rag
+
+
+def _rag_enabled(req: ChatCompletionRequest) -> bool:
+    """요청별 extra.rag override > 설정 rag.serving_enabled."""
+    override = req.extra.get("rag")
+    if override is not None:
+        return bool(override)
+    return get_settings().rag.serving_enabled
 
 
 def get_router() -> GatewayRouter:
@@ -85,6 +107,12 @@ async def issue_key(
     return {"tenant_id": body.tenant_id, "virtual_key": raw}
 
 
+@app.get("/admin/cache/stats")
+async def get_cache_stats(_: None = Depends(_require_master)) -> dict:
+    """캐시 히트율(비용 절감 관측)."""
+    return cache_stats.stats()
+
+
 @app.get("/v1/models")
 async def list_models(ctx: TenantContext = Depends(authenticate)) -> dict:
     models = get_router().logical_models
@@ -106,16 +134,48 @@ async def chat_completions(
     except PolicyViolation as exc:
         raise HTTPException(429, str(exc)) from exc
 
-    # 2) 라우팅 호출 + 트레이싱
+    # 2) 입력 가드레일 (프롬프트 인젝션) — 원본 사용자 입력에 적용
+    gin = guardrails.check_input([m.model_dump() for m in req.messages])
+    if not gin.allowed:
+        raise HTTPException(400, f"guardrail: {gin.reason}")
+
+    # 2.5) 서빙 RAG — 검색·컨텍스트 주입(평가 --rag와 동일 경로). control 필드는 제거.
+    rag_on = _rag_enabled(req)
+    req.extra.pop("rag", None)
+    if rag_on:
+        from llmops_core.common.schemas import ChatMessage
+
+        injected, _hits = get_rag().inject_context([m.model_dump() for m in req.messages])
+        req.messages = [ChatMessage(**m) for m in injected]
+
+    # 3) 라우팅 호출 + 트레이싱 (캐싱은 litellm 네이티브가 Router 내부에서 처리)
     with llm_span(req.model, tenant=ctx, temperature=req.temperature) as span:
-        raw, usage = await router.acompletion(req)
-        cost = router.estimate_cost(req.model, usage)
+        raw, usage, cache_hit = await router.acompletion(req)
+        cache_stats.record(cache_hit)
+        cost = 0.0 if cache_hit else router.estimate_cost(req.model, usage)
         record_usage(span, usage, response_model=raw.get("model"), cost_usd=cost)
 
-    # 3) 비용 반영 (예산 통제)
+    # 4) 출력 가드레일 (금칙어·PII 마스킹) — 첫 choice 메시지에 적용
+    _apply_output_guardrail(raw)
+
+    # 5) 비용 반영 (캐시 적중 시 0 — 예산 통제)
     policy.record_spend(ctx, cost)
 
     return JSONResponse(raw)
+
+
+def _apply_output_guardrail(raw: dict) -> None:
+    """응답 choices의 메시지 콘텐츠에 출력 가드레일 적용(차단 시 400, 마스킹 시 치환)."""
+    for choice in raw.get("choices", []):
+        msg = choice.get("message") or {}
+        content = msg.get("content")
+        if not isinstance(content, str):
+            continue
+        gout = guardrails.check_output(content)
+        if not gout.allowed:
+            raise HTTPException(400, f"guardrail: {gout.reason}")
+        if gout.text is not None and gout.text != content:
+            msg["content"] = gout.text
 
 
 @app.exception_handler(PolicyViolation)

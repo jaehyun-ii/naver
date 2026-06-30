@@ -63,8 +63,8 @@ async def chat(body: ChatBody) -> ChatReply:
             max_tokens=body.max_tokens,
         )
         router_ = GatewayRouter()
-        raw, usage = await router_.acompletion(req)
-        cost = router_.estimate_cost(body.model, usage)
+        raw, usage, cache_hit = await router_.acompletion(req)
+        cost = 0.0 if cache_hit else router_.estimate_cost(body.model, usage)
         reply = ChatReply(
             content=raw["choices"][0]["message"]["content"],
             model=raw.get("model", body.model),

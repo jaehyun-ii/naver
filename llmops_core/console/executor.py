@@ -175,12 +175,20 @@ class RealExecutor:
     # ── 1.5) 평가(학습 어댑터로 실제 추론·채점) ──
     def evaluate(
         self, run_id: str, cases: list[dict], *, base_model: str | None = None,
-        task: str = "reference",
+        task: str = "reference", prompt_name: str | None = None,
+        prompt_label: str = "prod", use_rag: bool = False, rag_top_k: int = 4,
     ) -> dict:
         """run_id의 어댑터로 cases를 평가 → {metrics, num_cases} 반환.
 
         task="reference": cases={question,expected} 생성·채점 (SFT).
         task="preference": cases={prompt,chosen,rejected} 선호정확도 (DPO).
+
+        prompt_name 지정 시: 호스트에서 GitPromptStore의 해당 라벨 프롬프트를 해석해
+        평가에 시스템 프롬프트로 주입(서빙과 동일 적용 — 평가=서빙 정합). 스토어는
+        호스트에만 있으므로 컨테이너에 마운트하지 않고 텍스트로 전달한다.
+
+        use_rag=True: 호스트 RAG 스토어를 run 디렉토리로 복사해 평가가 검색·컨텍스트
+        주입을 거치게 한다(서빙이 RAG 기반일 때). 스토어가 없으면 빈 KB로 무영향.
         """
         rd = self._run_dir(run_id)
         if not (rd / "adapter" / "adapter_config.json").exists():
@@ -189,6 +197,26 @@ class RealExecutor:
         eval_jsonl.write_text(
             "\n".join(json.dumps(c, ensure_ascii=False) for c in cases), encoding="utf-8"
         )
+        prompt_args: list[str] = []
+        if prompt_name:
+            from llmops_core.prompts import GitPromptStore, PromptNotFound
+
+            try:
+                pr = GitPromptStore().by_label(prompt_name, prompt_label)
+                prompt_args = ["--system-prompt", pr.template]
+            except PromptNotFound:
+                pass  # 프롬프트 미등록이면 프롬프트 없이 평가(기존 동작)
+        rag_args: list[str] = []
+        if use_rag:
+            import shutil
+
+            from llmops_core.common.config import get_settings
+
+            host_store = Path(get_settings().rag.persist_path or "")
+            rag_args = ["--rag", "--rag-top-k", str(rag_top_k)]
+            if host_store.exists() and host_store.is_file():
+                shutil.copy(host_store, rd / "rag_store")
+                rag_args += ["--rag-store", "/work/rag_store"]
         tail = [
             *self._common_mounts(),
             "-v", f"{rd}:/work",
@@ -199,6 +227,8 @@ class RealExecutor:
             "--cases", "/work/eval.jsonl",
             "--task", task,
             "--out", "/work/metrics.json",
+            *prompt_args,
+            *rag_args,
         ]
         out = self._gpu_run(tail)
         # stdout 마지막 JSON 줄 파싱(견고하게)

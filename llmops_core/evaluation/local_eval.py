@@ -52,12 +52,22 @@ def _load_model(base: str, adapter: str | None):
     return model, tok, device
 
 
-def _seq_logprob(model, tok, device, prompt: str, completion: str) -> float:
+def _messages(question: str, system: str | None) -> list[dict]:
+    """평가·서빙 공통 메시지 구성 — system 프롬프트가 있으면 prepend."""
+    msgs: list[dict] = []
+    if system:
+        msgs.append({"role": "system", "content": system})
+    msgs.append({"role": "user", "content": question})
+    return msgs
+
+
+def _seq_logprob(model, tok, device, prompt: str, completion: str,
+                 system: str | None = None) -> float:
     """prompt에 이어진 completion 토큰들의 평균 로그확률(선호 비교용)."""
     import torch
 
     p_ids = tok.apply_chat_template(
-        [{"role": "user", "content": prompt}],
+        _messages(prompt, system),
         add_generation_prompt=True, return_tensors="pt",
     ).to(device)
     c_ids = tok(completion, return_tensors="pt", add_special_tokens=False)["input_ids"].to(device)
@@ -72,12 +82,17 @@ def _seq_logprob(model, tok, device, prompt: str, completion: str) -> float:
     return float(sel.mean())
 
 
-def run_preference_eval(model, tok, device, cases: list[dict]) -> dict:
-    """각 {prompt,chosen,rejected}에서 logp(chosen)>logp(rejected) 비율 = 선호 정확도."""
+def run_preference_eval(model, tok, device, cases: list[dict],
+                        system: str | None = None, system_fn=None) -> dict:
+    """각 {prompt,chosen,rejected}에서 logp(chosen)>logp(rejected) 비율 = 선호 정확도.
+
+    system_fn(prompt)이 주어지면 행별로 시스템을 동적 구성(RAG 컨텍스트 주입용).
+    """
     wins, margins = [], []
     for c in cases:
-        lc = _seq_logprob(model, tok, device, c["prompt"], c["chosen"])
-        lr = _seq_logprob(model, tok, device, c["prompt"], c["rejected"])
+        sys_c = system_fn(c["prompt"]) if system_fn else system
+        lc = _seq_logprob(model, tok, device, c["prompt"], c["chosen"], sys_c)
+        lr = _seq_logprob(model, tok, device, c["prompt"], c["rejected"], sys_c)
         wins.append(1.0 if lc > lr else 0.0)
         margins.append(lc - lr)
     n = max(len(cases), 1)
@@ -87,11 +102,12 @@ def run_preference_eval(model, tok, device, cases: list[dict]) -> dict:
     }
 
 
-def _generate(model, tok, device, question: str, max_new_tokens: int = 128) -> str:
+def _generate(model, tok, device, question: str, max_new_tokens: int = 128,
+              system: str | None = None) -> str:
     import torch
 
     enc = tok.apply_chat_template(
-        [{"role": "user", "content": question}],
+        _messages(question, system),
         add_generation_prompt=True, return_tensors="pt", return_dict=True,
     ).to(device)
     prompt_len = enc["input_ids"].shape[-1]
@@ -103,6 +119,60 @@ def _generate(model, tok, device, question: str, max_new_tokens: int = 128) -> s
     return tok.decode(out[0][prompt_len:], skip_special_tokens=True)
 
 
+def _compose_system(system: str | None, context: str | None) -> str | None:
+    """prod 시스템 프롬프트와 RAG 컨텍스트를 합성 — 서빙과 동일 규약을 공유(평가=서빙 정합)."""
+    from llmops_core.rag import compose_system
+
+    return compose_system(system, context)
+
+
+def _make_rag(args):
+    """--rag 지정 시 RagPipeline과 메타데이터 반환. 미지정이면 (None, None).
+
+    서빙이 RAG 기반일 때 평가도 동일 검색·주입을 거치게 한다(선택). 빈 KB면 컨텍스트가
+    비어 사실상 무영향(graceful). 임베더/백엔드는 설정(rag.*), 스토어는 --rag-store로 override.
+    """
+    if not getattr(args, "rag", False):
+        return None, None
+    from llmops_core.common.config import get_settings
+    from llmops_core.rag import RagPipeline
+    from llmops_core.rag.store import InMemoryVectorStore
+
+    store = InMemoryVectorStore(persist_path=args.rag_store) if args.rag_store else None
+    rag = RagPipeline(store=store)
+    meta = {"used": True, "top_k": args.rag_top_k, "documents": rag.store.count(),
+            "embedder": get_settings().rag.embedder}
+    return rag, meta
+
+
+def _build_system_fn(base_system: str | None, rag, top_k: int):
+    """질문 → 시스템 프롬프트(+RAG 컨텍스트) 함수. rag 없으면 base_system 고정."""
+    if rag is None:
+        return lambda _q: base_system
+
+    def system_fn(question: str) -> str | None:
+        ctx = rag.build_context(rag.retrieve(question, top_k))
+        return _compose_system(base_system, ctx)
+
+    return system_fn
+
+
+def _resolve_system_prompt(args) -> tuple[str | None, dict | None]:
+    """평가에 적용할 시스템 프롬프트를 해석.
+
+    우선순위: --prompt-name(스토어 라벨 조회) > --system-prompt(리터럴) > 없음.
+    반환된 meta는 eval 기록에 "어떤 프롬프트로 측정했는지" 남기기 위함(평가=서빙 정합).
+    """
+    if args.prompt_name:
+        from llmops_core.prompts import GitPromptStore
+
+        pr = GitPromptStore().by_label(args.prompt_name, args.prompt_label)
+        return pr.template, {"name": pr.name, "version": pr.version, "label": pr.label}
+    if args.system_prompt:
+        return args.system_prompt, {"name": None, "version": None, "label": "inline"}
+    return None, None
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="로컬 평가 (judge 불필요)")
     p.add_argument("--base", required=True)
@@ -112,8 +182,21 @@ def main() -> None:
                    help="reference: 생성·정답대비 / preference: chosen>rejected 선호정확도")
     p.add_argument("--out", default=None, help="메트릭 JSON 저장 경로(선택)")
     p.add_argument("--max-new-tokens", type=int, default=128)
+    p.add_argument("--system-prompt", default=None,
+                   help="평가에 주입할 시스템 프롬프트(서빙과 동일 적용; 평가=서빙 정합)")
+    p.add_argument("--prompt-name", default=None,
+                   help="GitPromptStore 프롬프트명 — 라벨로 해석해 --system-prompt 대신 사용")
+    p.add_argument("--prompt-label", default="prod", help="--prompt-name 사용 시 라벨")
+    p.add_argument("--rag", action="store_true",
+                   help="평가에 RAG 검색·컨텍스트 주입 적용(서빙이 RAG 기반일 때 — 평가=서빙 정합)")
+    p.add_argument("--rag-top-k", type=int, default=4, help="RAG 검색 문서 수")
+    p.add_argument("--rag-store", default=None,
+                   help="RAG 벡터스토어 경로(미지정 시 설정 rag.persist_path)")
     args = p.parse_args()
 
+    system, prompt_meta = _resolve_system_prompt(args)
+    rag, rag_meta = _make_rag(args)
+    system_fn = _build_system_fn(system, rag, args.rag_top_k)
     model, tok, device = _load_model(args.base, args.adapter)
 
     if args.task == "preference":
@@ -122,8 +205,9 @@ def main() -> None:
         rows = [_json.loads(ln) for ln in Path(args.cases).read_text(encoding="utf-8").splitlines()
                 if ln.strip()]
         rows = [r for r in rows if r.get("prompt") and r.get("chosen") and r.get("rejected")]
-        metrics = run_preference_eval(model, tok, device, rows)
-        payload = {"metrics": metrics, "num_cases": len(rows)}
+        metrics = run_preference_eval(model, tok, device, rows, system, system_fn=system_fn)
+        payload = {"metrics": metrics, "num_cases": len(rows), "prompt": prompt_meta,
+                   "rag": rag_meta}
         if args.out:
             Path(args.out).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         print(json.dumps(payload, ensure_ascii=False), flush=True)
@@ -132,11 +216,13 @@ def main() -> None:
     cases = _load_cases(args.cases)
     scored: list[EvalCase] = []
     for c in cases:
-        ans = _generate(model, tok, device, c.question, args.max_new_tokens)
+        ans = _generate(model, tok, device, c.question, args.max_new_tokens,
+                        system_fn(c.question))
         scored.append(c.model_copy(update={"answer": ans}))
 
     metrics = run_reference_metrics(scored)
-    payload = {"metrics": metrics, "num_cases": len(scored)}
+    payload = {"metrics": metrics, "num_cases": len(scored), "prompt": prompt_meta,
+               "rag": rag_meta}
     if args.out:
         Path(args.out).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     # 실행기가 파싱하도록 마지막 줄에 단일 JSON

@@ -29,6 +29,7 @@ class GatewayRouter:
 
     def __init__(self, model_list: list[dict[str, Any]] | None = None) -> None:
         try:
+            import litellm
             from litellm import Router  # lazy: pip install -e ".[gateway]"
         except ImportError as exc:  # pragma: no cover
             raise OptionalDependencyError("litellm", "gateway") from exc
@@ -36,14 +37,24 @@ class GatewayRouter:
         if model_list is None:
             model_list = _load_model_list(get_settings().gateway.config_path)
         self._model_list = model_list
-        self._router = Router(model_list=model_list)
+
+        # 응답 캐싱: litellm 네이티브(인메모리/redis/시맨틱)를 임베드. 설정으로 on/off.
+        from llmops_core.gateway.cache import make_litellm_cache
+
+        cache = make_litellm_cache()
+        cache_responses = cache is not None
+        if cache_responses:
+            litellm.cache = cache
+        self._router = Router(model_list=model_list, cache_responses=cache_responses)
 
     @property
     def logical_models(self) -> list[str]:
         return sorted({m["model_name"] for m in self._model_list})
 
-    async def acompletion(self, req: ChatCompletionRequest) -> tuple[dict[str, Any], Usage]:
-        """채팅 완성 호출. (raw 응답 dict, 정규화된 Usage) 반환."""
+    async def acompletion(
+        self, req: ChatCompletionRequest
+    ) -> tuple[dict[str, Any], Usage, bool]:
+        """채팅 완성 호출. (raw 응답 dict, 정규화된 Usage, 캐시적중여부) 반환."""
         kwargs: dict[str, Any] = {
             "model": req.model,
             "messages": [m.model_dump(exclude_none=True) for m in req.messages],
@@ -56,13 +67,16 @@ class GatewayRouter:
 
         resp = await self._router.acompletion(**kwargs)
         raw = resp.model_dump() if hasattr(resp, "model_dump") else dict(resp)
+        # litellm이 캐시 적중을 _hidden_params로 알려줌
+        hidden = getattr(resp, "_hidden_params", None) or raw.get("_hidden_params") or {}
+        cache_hit = bool(hidden.get("cache_hit"))
         u = raw.get("usage") or {}
         usage = Usage(
             prompt_tokens=u.get("prompt_tokens", 0),
             completion_tokens=u.get("completion_tokens", 0),
             total_tokens=u.get("total_tokens", 0),
         )
-        return raw, usage
+        return raw, usage, cache_hit
 
     def estimate_cost(self, model: str, usage: Usage) -> float:
         """litellm의 비용 계산기를 차용(없으면 0)."""

@@ -18,25 +18,19 @@ import json
 from pathlib import Path
 
 from llmops_core.evaluation.harness import run_reference_metrics
-from llmops_core.evaluation.local_eval import _load_cases, _load_model
+from llmops_core.evaluation.local_eval import _generate, _load_cases, _load_model
 
 
 def evaluate_variant(model, tok, device, system: str, cases) -> dict:
-    """system 프롬프트를 주입해 각 질문에 답 생성 → reference 메트릭."""
-    import torch
+    """system 프롬프트를 주입해 각 질문에 답 생성 → reference 메트릭.
 
-    scored = []
-    for c in cases:
-        msgs = [{"role": "system", "content": system}, {"role": "user", "content": c.question}]
-        enc = tok.apply_chat_template(
-            msgs, add_generation_prompt=True, return_tensors="pt", return_dict=True
-        ).to(device)
-        plen = enc["input_ids"].shape[-1]
-        with torch.no_grad():
-            out = model.generate(**enc, max_new_tokens=64, do_sample=False,
-                                  pad_token_id=tok.eos_token_id)
-        ans = tok.decode(out[0][plen:], skip_special_tokens=True)
-        scored.append(c.model_copy(update={"answer": ans}))
+    생성 경로는 모델 평가(local_eval._generate)와 동일하게 공유한다 — 프롬프트 변형
+    비교와 모델 평가가 같은 추론 경로·메트릭을 쓰도록(평가=서빙 정합).
+    """
+    scored = [
+        c.model_copy(update={"answer": _generate(model, tok, device, c.question, 64, system)})
+        for c in cases
+    ]
     return run_reference_metrics(scored)
 
 

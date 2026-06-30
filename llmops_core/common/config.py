@@ -37,6 +37,52 @@ class GatewaySettings(BaseModel):
     master_key: str = "sk-master-changeme"
     config_path: str = "./config/model_list.yaml"
     redis_url: str | None = None  # 응답 캐시(선택)
+    # 콘솔이 게이트웨이 관리 API(캐시 통계 등)를 조회할 베이스 URL. 컴포즈에선 서비스명 사용.
+    base_url: str = "http://localhost:4000"
+
+
+class CacheSettings(BaseModel):
+    """게이트웨이 응답 캐싱 — 동일 요청 재사용으로 토큰 비용 절감(비용관리 보강).
+
+    backend=memory(프로세스 LRU) | redis(공유·다중인스턴스). 키는 모델+메시지+파라미터 해시.
+    """
+
+    enabled: bool = True
+    backend: str = "memory"  # "memory" | "redis"
+    ttl_s: int = 3600
+    max_entries: int = 1024  # memory 백엔드 LRU 상한
+
+
+class GuardrailSettings(BaseModel):
+    """서빙 시점 가드레일 — 입력 프롬프트인젝션·출력 모더레이션·PII 누출 차단.
+
+    순수 휴리스틱 기본(추가 의존성 0). mask_output_pii는 Presidio(quality extra) 필요.
+    """
+
+    enabled: bool = True
+    block_on_injection: bool = True  # 인젝션 탐지 시 요청 차단(False면 통과·로깅만)
+    block_on_banned: bool = True  # 금칙어 출력 차단
+    mask_output_pii: bool = False  # 출력 PII 마스킹(Presidio 필요)
+    banned_terms: list[str] = Field(default_factory=list)
+
+
+class RagSettings(BaseModel):
+    """RAG 서빙 — 임베딩→벡터스토어→검색→컨텍스트 주입. 런타임 검색 경로.
+
+    embedder=bge-m3(sentence-transformers, 캐시됨) | hashing(순수파이썬 폴백·무의존).
+    backend=memory(코사인·디스크영속) | qdrant(QdrantSettings 사용).
+    """
+
+    embedder: str = "hashing"  # "bge-m3" | "hashing"
+    embedding_model: str = "BAAI/bge-m3"
+    dim: int = 256  # hashing 임베더 차원(bge-m3는 모델 차원 사용)
+    backend: str = "memory"  # "memory" | "qdrant"
+    collection: str = "default"
+    top_k: int = 4
+    persist_path: str | None = "./rag_store"  # memory 백엔드 디스크 영속(없으면 휘발)
+    # 서빙 시점 자동 RAG — 게이트웨이가 요청을 검색·컨텍스트 주입 후 모델 호출.
+    # 기본 off(요청별 extra.rag로 override). 켜면 평가(--rag)와 서빙이 동일 경로로 정합.
+    serving_enabled: bool = False
 
 
 class TelemetrySettings(BaseModel):
@@ -124,6 +170,9 @@ class Settings(BaseSettings):
 
     s3: S3Settings = Field(default_factory=S3Settings)
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
+    cache: CacheSettings = Field(default_factory=CacheSettings)
+    guardrails: GuardrailSettings = Field(default_factory=GuardrailSettings)
+    rag: RagSettings = Field(default_factory=RagSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     mlflow: MLflowSettings = Field(default_factory=MLflowSettings)
