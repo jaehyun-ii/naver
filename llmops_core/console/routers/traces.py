@@ -45,10 +45,10 @@ def _summarize(trace: dict) -> dict:
         return next((t.get("value") for t in s.get("tags", []) if t.get("key") == key), None)
     root = spans[0] if spans else {}
     has_err = any(tag(s, "error") in (True, "true") for s in spans)
-    total_tokens = next((tag(s, "llm.usage.total_tokens") for s in spans
-                         if tag(s, "llm.usage.total_tokens") is not None), None)
-    cost = next((tag(s, "llm.cost_usd") for s in spans
-                 if tag(s, "llm.cost_usd") is not None), None)
+    total_tokens = next((tag(s, "gen_ai.usage.total_tokens") for s in spans
+                         if tag(s, "gen_ai.usage.total_tokens") is not None), None)
+    cost = next((tag(s, "llmops.cost.usd") for s in spans
+                 if tag(s, "llmops.cost.usd") is not None), None)
     return {
         "traceID": trace.get("traceID"),
         "root": root.get("operationName", ""),
@@ -84,7 +84,7 @@ def trace_detail(trace_id: str) -> dict:
             spans.append({"op": s.get("operationName"),
                           "duration_ms": round(s.get("duration", 0) / 1000, 1),
                           "tags": {k: v for k, v in tags.items()
-                                   if k.startswith("llm.") or k in ("error",)}})
+                                   if k.startswith(("gen_ai.", "llmops.")) or k == "error"}})
         return {"available": True, "spans": spans}
     except Exception as exc:  # noqa: BLE001
         return {"available": False, "error": str(exc)}
