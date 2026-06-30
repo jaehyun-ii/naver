@@ -16,17 +16,17 @@
 
 ```
 llmops_core/
-├─ common/         # 설정·인증·S3(boto3)·공통 스키마      [핵심 글루]
+├─ common/         # 설정·인증·S3(boto3)·공통 스키마·모델클라이언트(가드레일/judge 공용) [핵심 글루]
 ├─ ingestion/      # pyspark 잡 + 정규화/정확중복 + S3 JSONL io  [L1 Embed]
 ├─ quality/        # PII(Presidio)·언어(fastText)·근사중복·검증게이트·Argilla [L1·L2]
 ├─ dataset/        # SFT/Preference 변환·결정적분할·핑거프린트·DVC [L3 Embed]
 ├─ telemetry/      # OTel SDK + LLM 스팬 시맨틱 규약        [Embed]
-├─ gateway/        # litellm.Router + 가상키/예산/정책엔진 + FastAPI   [Embed]
-├─ prompts/        # Git-backed 프롬프트 스토어(버전·라벨·롤백)
-├─ evaluation/     # ragas/deepeval metrics + 게이트 + 추론(predict) [Embed]
+├─ gateway/        # litellm.Router + 가상키/예산/정책 + 가드레일 + 응답캐시(litellm) + FastAPI [Embed]
+├─ prompts/        # Git-backed 프롬프트 스토어(버전·라벨·롤백) + judge·가드레일 프롬프트 해석
+├─ evaluation/     # reference/preference 로컬평가 + LLM-as-judge + 게이트 + 추론(predict) [Embed]
 ├─ governance/     # Release Gateway(배포 2차 승인 게이트)   [Build]
 ├─ orchestration/  # langchain-core 프리미티브 기반 체인     [Primitive]
-├─ rag/            # llama_index.core + qdrant_client       [Embed+Service]
+├─ rag/            # 서빙: 임베더(bge-m3/해시폴백)·인메모리스토어·증강 / 헤비: llama_index.core+qdrant [Embed+Service]
 ├─ serving/        # vllm AsyncLLMEngine + LoRA 매니저       [Embed]
 ├─ training/       # unsloth + trl + peft 학습기            [Embed]
 ├─ tuning/         # optuna 탐색                            [Embed]
@@ -103,6 +103,8 @@ docker compose -f deploy/docker-compose.yaml down               # 정리
 | 8 | 학습 파라미터 최적화 | **HPO** (`/api/tuning/hpo` Optuna) |
 | 9 | 데이터 버전별 성능평가 | **데이터 버전별 성능** (`/api/evaluation/by-version`) |
 | 10 | 도메인 데이터셋 파인튜닝 | **데이터셋** + **파이프라인** |
+
+추가 탭(서빙 운영 보강): **RAG 지식베이스**(`/api/rag` 색인·검색·증강) · **가드레일·안전**(`/api/safety` 가드레일 점검·설정·캐시 히트율) · **드리프트 탐지**(`/api/drift`) · **서빙·카나리**(`/api/serving`).
 
 실행: `pip install -e ".[gateway,tracking]"` 후 `uvicorn llmops_core.console.app:app --port 4100`(real 모드는 호스트, docker 접근 필요).
 
@@ -182,6 +184,34 @@ uvicorn llmops_core.console.app:app --reload --port 4100
 | **재학습 스케줄러(Argo Cron 대체)** | `pipelines.scheduler --console .. --interval N [--auto-approve]` | ✅ 검증(콘솔 트리거→자동승인) |
 | **NCP 하이브리드 스토리지** | `LLMOPS_S3__PROVIDER=ncp` (엔드포인트 자동 전환) | ✅ S3 seam 검증(MinIO), NCP는 크레덴셜만 |
 | **서빙 마이크로배칭** | `serving.batching.MicroBatcher` | ✅ 유틸 + 단위테스트 (처리량 상한은 vLLM) |
+
+## 서빙 운영 보강 — RAG 서빙·가드레일·캐시·평가정합·LLM-judge
+
+일반 LLMOps 구성요소를 보강하고, **평가가 서빙과 동일 경로로 측정**되도록 정합시켰다(H100 검증, 테스트 120개 통과).
+
+### RAG 서빙 (런타임 검색→컨텍스트 주입)
+`rag/`에 임베더(설정 `LLMOPS_RAG__EMBEDDER`: `bge-m3` | 무의존 `hashing` 폴백)·인메모리 벡터스토어(디스크 영속, 또는 `backend=qdrant`)·`RagPipeline`을 추가. 게이트웨이가 요청을 검색·주입한다(설정 `LLMOPS_RAG__SERVING_ENABLED=true` 또는 요청별 `extra.rag`). 콘솔 **RAG 지식베이스** 탭(`/api/rag` 색인·검색·증강 미리보기). 기존 llama_index/Qdrant 헤비 경로와 공존.
+
+### 서빙 가드레일 (`gateway/guardrails.py`)
+- **입력**: 프롬프트 인젝션 차단(한/영 휴리스틱) + **선택적 모델 분류**(`LLMOPS_GUARDRAILS__MODEL`=논리명, 예: LlamaGuard). 휴리스틱과 OR 결합, 모델 미가용 시 fail-open.
+- **출력**: 금칙어·PII(Presidio) 모더레이션. 콘솔 **가드레일·안전** 탭에서 점검(`/api/safety/guardrail/check`, 분류 모델 즉석 선택).
+
+### 응답 캐싱 (litellm 네이티브)
+`litellm.Cache`(local/redis/시맨틱)를 Router에 임베드 — 동일 요청 재사용 시 `cost=0`. 히트율 `/admin/cache/stats`(콘솔 안전 탭에 라이브 표시). 설정 `LLMOPS_CACHE__*`.
+
+### 평가 = 서빙 정합
+평가가 서빙과 같은 프롬프트·RAG를 적용하도록 보강. `evaluation.local_eval`:
+- `--system-prompt` / `--prompt-name`(GitPromptStore prod 프롬프트) — 서빙 프롬프트로 평가.
+- `--rag` — 서빙과 동일 `RagPipeline.compose_system`으로 컨텍스트 주입.
+- `--judge-model` — **LLM-as-judge** 채점(`judge_score`). 결정적 reference 메트릭과 병행.
+
+파이프라인 탭/`RunPipelineBody`에 `prompt_name`·`use_rag`·`judge_model` 노출.
+
+### 가드레일·judge 모델 선택
+둘 다 **`config/model_list.yaml`의 논리 모델명**으로 선택 → 게이트웨이가 백엔드 라우팅(`common/model_client.py` 공용 클라이언트). 콘솔 드롭다운(파이프라인=judge, 안전=가드레일 분류기).
+
+### judge·가드레일 프롬프트도 버전 자산
+하드코딩 대신 **GitPromptStore**로 관리 — `judge`(`{q}{ref}{ans}`)·`guardrail-classifier`(`{text}`)·`rag-system`(`{context}`). prod 라벨 등록 시 그것을, 없으면 내장 기본값(코드 수정 없이 prod 승격으로 동작 변경). 콘솔 **프롬프트** 탭 "시스템 특수 프롬프트" 표(`/api/prompts/catalog`)에서 편집·승격. 설정 `LLMOPS_GUARDRAILS__PROMPT_NAME`·`LLMOPS_EVALUATION__JUDGE_PROMPT_NAME`.
 
 ### vLLM 처리량 경로 (GB10)
 transformers 서버는 레퍼런스/개발용. 프로덕션 처리량(PagedAttention·연속배칭·Multi-LoRA)은
