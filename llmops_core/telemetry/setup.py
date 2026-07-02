@@ -7,12 +7,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from llmops_core.common.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 _initialized = False
 
@@ -35,9 +39,14 @@ def init_telemetry() -> None:
     exporter = _build_exporter(s.backend)
     if exporter is not None:
         provider.add_span_processor(BatchSpanProcessor(exporter))
+    else:
+        logger.info("telemetry: exporter 미구성(backend=%s) — 스팬 무송출(로컬)", s.backend)
 
     trace.set_tracer_provider(provider)
     _initialized = True
+    # export 실패는 OTel SDK 내부 로거(opentelemetry.exporter.*, .sdk.trace.export)가
+    # 자체적으로 WARNING/ERROR 로 남긴다. 여기서 그 로거를 억제하지 않으므로 실패가 가시화된다.
+    logger.info("telemetry initialized (backend=%s)", s.backend)
 
 
 def _build_exporter(backend: str):
@@ -62,5 +71,8 @@ def _build_exporter(backend: str):
             headers={"Authorization": f"Basic {auth}"},
         )
 
-    # 기본: OTel 자체 구축 백엔드
-    return OTLPSpanExporter(endpoint=s.otlp_endpoint, insecure=True)
+    # 기본: OTel 자체 구축 백엔드.
+    # TLS: https:// 엔드포인트면 보안 채널, 그 외(http://·스킴 없는 내부 cleartext)만 insecure.
+    endpoint = s.otlp_endpoint
+    insecure = not endpoint.startswith("https://")
+    return OTLPSpanExporter(endpoint=endpoint, insecure=insecure)

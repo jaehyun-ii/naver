@@ -23,6 +23,7 @@ class QualityRules:
     max_chars: int | None = None
     allowed_langs: list[str] | None = None
     max_dup_ratio: float | None = None
+    near_dup_threshold: float | None = None
     required_metadata: list[str] = field(default_factory=list)
 
     def resolved(self) -> "QualityRules":
@@ -33,6 +34,10 @@ class QualityRules:
             allowed_langs=self.allowed_langs or s.allowed_langs,
             max_dup_ratio=(
                 self.max_dup_ratio if self.max_dup_ratio is not None else s.max_dup_ratio
+            ),
+            near_dup_threshold=(
+                self.near_dup_threshold if self.near_dup_threshold is not None
+                else s.near_dup_threshold
             ),
             required_metadata=self.required_metadata,
         )
@@ -52,6 +57,16 @@ def validate_records(
 
     if n == 0:
         failures["non_empty"] = "레코드가 0건"
+
+    # 언어감지(fasttext lid 설정 시) — .lang을 채워 아래 화이트리스트 검사를 실효화.
+    # 모델 미설정/미설치 환경(dev)에서는 원본을 그대로 두고 스킵(graceful).
+    if r.allowed_langs:
+        try:
+            from llmops_core.quality.clean import annotate_language
+
+            records = annotate_language(records)
+        except OptionalDependencyError:
+            pass
 
     # 길이 경계
     too_short = sum(1 for x in records if len(x.text) < (r.min_chars or 0))
@@ -75,6 +90,22 @@ def validate_records(
         if r.max_dup_ratio is not None and dup_ratio > r.max_dup_ratio:
             failures["max_dup_ratio"] = f"중복비율 {dup_ratio} > {r.max_dup_ratio}"
 
+    # 근사중복(MinHash LSH) — Jaccard ≥ near_dup_threshold 인 유사 레코드 비율.
+    # datasketch 미설치(dev) 시 스킵. 근사중복 비율도 max_dup_ratio 상한으로 게이트.
+    near_dup_ratio = 0.0
+    if n and r.near_dup_threshold:
+        try:
+            from llmops_core.quality.clean import drop_near_duplicates
+
+            _, removed = drop_near_duplicates(records, threshold=r.near_dup_threshold)
+            near_dup_ratio = round(removed / n, 4)
+            if r.max_dup_ratio is not None and near_dup_ratio > r.max_dup_ratio:
+                failures["near_dup_ratio"] = (
+                    f"근사중복비율 {near_dup_ratio} > {r.max_dup_ratio} "
+                    f"(임계 {r.near_dup_threshold})")
+        except OptionalDependencyError:
+            pass
+
     # 필수 메타데이터
     for field_name in r.required_metadata:
         missing = sum(1 for x in records if field_name not in x.metadata)
@@ -86,7 +117,8 @@ def validate_records(
         num_records=n,
         passed=not failures,
         failures=failures,
-        stats={"dup_ratio": dup_ratio, "num_records": float(n)},
+        stats={"dup_ratio": dup_ratio, "near_dup_ratio": near_dup_ratio,
+               "num_records": float(n)},
     )
     if not report.passed and raise_on_fail:
         raise DataQualityFailed(failures)

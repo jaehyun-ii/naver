@@ -6,11 +6,15 @@ MinIO 콘솔을 따로 띄우지 않고 boto3(common.storage)로 콘솔에서 �
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from llmops_core.common.storage import get_s3_client
 from llmops_core.console.security import require_perm
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/storage", tags=["storage"],
                    dependencies=[Depends(require_perm("read"))])
@@ -29,6 +33,8 @@ def buckets() -> dict:
                 "buckets": [{"name": b["Name"], "created": _iso(b.get("CreationDate"))}
                             for b in bs]}
     except Exception as exc:  # noqa: BLE001
+        # S3/MinIO 미도달을 "버킷 없음"으로 착각하지 않도록 로깅 + error 사유 노출.
+        logger.warning("S3 buckets 조회 실패: %s", exc, exc_info=True)
         return {"available": False, "error": str(exc)}
 
 
@@ -42,6 +48,8 @@ def objects(bucket: str, prefix: str = "", limit: int = 200) -> dict:
         return {"available": True, "bucket": bucket, "objects": objs,
                 "truncated": resp.get("IsTruncated", False)}
     except Exception as exc:  # noqa: BLE001
+        logger.warning("S3 objects 조회 실패(bucket=%s prefix=%s): %s", bucket, prefix, exc,
+                       exc_info=True)
         return {"available": False, "error": str(exc)}
 
 
@@ -54,6 +62,8 @@ def presign(bucket: str, key: str, expires: int = 600) -> dict:
             "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=expires)
         return {"available": True, "url": url}
     except Exception as exc:  # noqa: BLE001
+        logger.warning("S3 presign 실패(bucket=%s key=%s): %s", bucket, key, exc,
+                       exc_info=True)
         return {"available": False, "error": str(exc)}
 
 
@@ -66,6 +76,8 @@ def download(bucket: str, key: str) -> StreamingResponse:
     try:
         obj = get_s3_client().get_object(Bucket=bucket, Key=key)
     except Exception as exc:  # noqa: BLE001
+        logger.warning("S3 download 실패(bucket=%s key=%s): %s", bucket, key, exc,
+                       exc_info=True)
         raise HTTPException(404, f"객체 조회 실패: {exc}") from exc
     filename = key.rsplit("/", 1)[-1] or "download"
     return StreamingResponse(

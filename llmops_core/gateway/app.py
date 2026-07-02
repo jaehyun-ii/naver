@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from contextlib import asynccontextmanager
 
@@ -26,6 +27,8 @@ from llmops_core.gateway.keys import VirtualKeyStore
 from llmops_core.gateway.policy import PolicyEngine
 from llmops_core.gateway.router import GatewayRouter
 from llmops_core.telemetry import init_telemetry, llm_span, record_usage
+
+logger = logging.getLogger(__name__)
 
 # ── 의존 컴포넌트 (store.backend=postgres면 Postgres 영속, 게이트웨이↔콘솔 상태 공유) ──
 key_store: VirtualKeyStore = make_key_store()
@@ -63,7 +66,15 @@ def get_router() -> GatewayRouter:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_telemetry()
+    # fail-loud: 텔레메트리 초기화 실패를 조용히 삼키지 않는다. prod는 ERROR로 가시화하되
+    # 기동은 계속(트레이싱 부재로 게이트웨이 자체가 죽는 크래시 루프 방지).
+    try:
+        init_telemetry()
+    except Exception:  # noqa: BLE001
+        if get_settings().is_prod:
+            logger.error("telemetry 초기화 실패(prod) — 트레이싱 없이 계속", exc_info=True)
+        else:
+            logger.warning("telemetry 초기화 실패 — 트레이싱 없이 계속", exc_info=True)
     yield
 
 
@@ -93,7 +104,24 @@ def _audit_auth_fail(target: str, reason: str) -> None:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
+    """LIVENESS — 프로세스 생존만 확인하는 값싼 프로브(의존성 검사 없음)."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready() -> JSONResponse:
+    """READINESS — 임계 의존성(Postgres/Redis/S3/MLflow/Qdrant 등) 실제 도달 확인.
+
+    모두 정상이면 200, 하나라도 실패면 503 + 의존성별 상태 dict. 짧은 타임아웃으로 병렬 프로브.
+    """
+    from llmops_core.telemetry.health import check_readiness
+
+    ok, deps = check_readiness()
+    return JSONResponse(
+        status_code=200 if ok else 503,
+        content={"status": "ready" if ok else "degraded", "service": "gateway",
+                 "dependencies": deps},
+    )
 
 
 # ── 관리자: 가상키 발급 (master_key로 보호) — 멀티테넌시 제어 평면 ──

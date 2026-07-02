@@ -5,10 +5,14 @@ MLflow UI를 따로 띄우지 않고 MlflowClient로 핵심 뷰를 콘솔 스타
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 
 from llmops_core.common.config import get_settings
 from llmops_core.console.security import require_perm
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tracking", tags=["tracking"],
                    dependencies=[Depends(require_perm("read"))])
@@ -30,6 +34,8 @@ def experiments() -> dict:
                 "experiments": [{"id": e.experiment_id, "name": e.name,
                                  "stage": e.lifecycle_stage} for e in exps]}
     except Exception as exc:  # noqa: BLE001
+        # 백엔드 미도달/오류를 "데이터 없음"으로 착각하지 않도록 로깅 + error 사유 노출.
+        logger.warning("MLflow experiments 조회 실패: %s", exc, exc_info=True)
         return {"available": False, "error": str(exc)}
 
 
@@ -50,6 +56,8 @@ def runs(experiment_id: str, limit: int = 20) -> dict:
             })
         return {"available": True, "runs": out}
     except Exception as exc:  # noqa: BLE001
+        logger.warning("MLflow runs 조회 실패(experiment=%s): %s", experiment_id, exc,
+                       exc_info=True)
         return {"available": False, "error": str(exc)}
 
 
@@ -67,4 +75,5 @@ def models() -> dict:
             out.append({"name": m.name, "versions": versions, "aliases": aliases})
         return {"available": True, "models": out}
     except Exception as exc:  # noqa: BLE001
+        logger.warning("MLflow registered models 조회 실패: %s", exc, exc_info=True)
         return {"available": False, "error": str(exc)}

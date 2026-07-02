@@ -122,7 +122,14 @@ CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log (ts DESC);
 
 
 def init_schema() -> None:
-    """제어평면 테이블 생성(멱등). backend=postgres 시 서비스 기동에서 1회 호출."""
+    """제어평면 테이블 생성(멱등) — 개발 부트스트랩용.
+
+    운영(prod)에서는 이 CREATE TABLE IF NOT EXISTS 대신 Alembic 마이그레이션을 사용한다:
+        alembic -c alembic.ini upgrade head
+    Alembic 초기 리비전은 아래 _SCHEMA 와 동일한 스키마를 반영하며, 이후 스키마 변경은
+    마이그레이션으로 버전 관리된다(expires_at 컬럼 추가 등). init_schema()는 로컬/테스트
+    편의를 위해 유지한다.
+    """
     with cursor() as cur:
         cur.execute(_SCHEMA)
 

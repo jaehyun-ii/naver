@@ -19,6 +19,17 @@ from llmops_core.monitoring import compute_drift, summarize
 router = APIRouter(prefix="/api/drift", tags=["drift"],
                    dependencies=[Depends(require_perm("read"))])
 
+# 통계적으로 의미 있는 드리프트 판정에 필요한 최소 표본 수(표본이 작으면 판정 보류)
+DEFAULT_MIN_SAMPLE = 30
+
+
+def _min_sample(thresholds: dict[str, float] | None) -> int:
+    """thresholds 딕셔너리의 'min_sample' 키로 오버라이드 가능(없으면 기본값)."""
+    try:
+        return int((thresholds or {}).get("min_sample", DEFAULT_MIN_SAMPLE))
+    except (TypeError, ValueError):
+        return DEFAULT_MIN_SAMPLE
+
 
 class BaselineBody(BaseModel):
     name: str
@@ -35,7 +46,7 @@ class AutoRetrainBody(BaseModel):
     baseline_name: str  # 비교 기준선
     current_texts: list[str]  # 운영 데이터 표본(드리프트 검사 대상)
     thresholds: dict[str, float] | None = None
-    auto_approve: bool = True  # 게이트 통과분 자동 승인·배포
+    auto_approve: bool = False  # 게이트 통과분 자동 승인·배포(기본 비활성 — 사람 승인)
     # 재학습 데이터/설정(드리프트 감지 시 사용)
     method: str = "sft"
     served_name: str = "hcx-seed-tuned"
@@ -72,11 +83,20 @@ def check(body: CheckBody) -> dict:
     base = services().drift_baselines.get(body.name)
     if base is None:
         raise HTTPException(404, f"기준선 없음: {body.name}")
+    min_sample = _min_sample(body.thresholds)
+    if len(body.texts) < min_sample:
+        # 표본 과소 — 오탐 방지 위해 드리프트 판정을 보류(insufficient_sample)
+        return {
+            "name": body.name, "drift": False, "verdict": "insufficient_sample",
+            "scores": {}, "thresholds": {}, "n_reference": base["summary"].get("n", 0),
+            "n_current": len(body.texts), "min_sample": min_sample,
+            "details": {"reason": f"표본 {len(body.texts)}건 < 최소 {min_sample}건"},
+        }
     rep = compute_drift(base["summary"], body.texts, thresholds=body.thresholds)
     return {
-        "name": body.name, "drift": rep.drift, "scores": rep.scores,
-        "thresholds": rep.thresholds, "n_reference": rep.n_reference,
-        "n_current": rep.n_current, "details": rep.details,
+        "name": body.name, "drift": rep.drift, "verdict": "drift" if rep.drift else "no_drift",
+        "scores": rep.scores, "thresholds": rep.thresholds, "n_reference": rep.n_reference,
+        "n_current": rep.n_current, "min_sample": min_sample, "details": rep.details,
     }
 
 

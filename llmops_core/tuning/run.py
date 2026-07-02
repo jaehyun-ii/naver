@@ -62,9 +62,9 @@ def main() -> None:
     print(f"[hpo] train={len(train_rows)} eval={len(eval_cases)} trials={args.trials}", flush=True)
 
     objective = _build_objective(args.base, train_rows, eval_cases, args.steps)
-    best_params, best_value = optimize(HPOConfig(n_trials=args.trials), objective)
+    best_params, best_value, trials = optimize(HPOConfig(n_trials=args.trials), objective)
 
-    payload = {"best_params": best_params, "best_value": best_value}
+    payload = {"best_params": best_params, "best_value": best_value, "trials": trials}
     if args.out:
         Path(args.out).write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     print("[hpo] BEST " + json.dumps(payload, ensure_ascii=False), flush=True)

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends
 
 from llmops_core.console.security import require_perm
@@ -16,6 +18,7 @@ router = APIRouter(prefix="/api/evaluation", tags=["evaluation"],
 
 
 def _parse_metrics(detail: str) -> dict:
+    """구버전 'k=v, k=v' 문자열 메트릭 파서(하위호환)."""
     out = {}
     for kv in (detail or "").split(", "):
         if "=" in kv:
@@ -27,6 +30,19 @@ def _parse_metrics(detail: str) -> dict:
     return out
 
 
+def _run_metrics(run) -> dict:
+    """run의 구조화 메트릭(metrics_json) 우선, 없으면 구버전 문자열 파싱(하위호환)."""
+    raw = run.artifacts.get("metrics_json")
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                return {k: v for k, v in data.items() if isinstance(v, (int, float))}
+        except (ValueError, TypeError):
+            pass
+    return _parse_metrics(run.artifacts.get("metrics", ""))
+
+
 @router.get("/by-version")
 def by_version() -> list[dict]:
     """데이터 버전(fingerprint)별로 run·메트릭을 묶어 반환(최신순)."""
@@ -35,7 +51,7 @@ def by_version() -> list[dict]:
         fp = run.artifacts.get("fingerprint")
         if not fp:
             continue
-        metrics = _parse_metrics(run.artifacts.get("metrics", ""))
+        metrics = _run_metrics(run)
         entry = {
             "run_id": run.id, "name": run.name,
             "status": run.status, "method": run.artifacts.get("served_name", ""),

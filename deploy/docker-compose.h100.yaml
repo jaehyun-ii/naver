@@ -131,6 +131,8 @@ services:
       # 안전/PII — 출력 마스킹 on(한국어 포함), 의존성 없으면 fail-closed
       LLMOPS_GUARDRAILS__MASK_OUTPUT_PII: "true"
       LLMOPS_GUARDRAILS__FAIL_CLOSED: "true"
+      # 파이프라인 빈 페이로드(canned 샘플) 거부 — 운영에선 강제
+      LLMOPS_PIPELINE_STRICT: "1"
       # 콘솔 통합 뷰 — MinIO 스토리지 조회(컨테이너 네트워크 서비스명)
       LLMOPS_S3__ENDPOINT_URL: http://minio:9000
       LLMOPS_S3__ACCESS_KEY: ${MINIO_ROOT_USER}

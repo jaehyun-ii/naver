@@ -50,6 +50,55 @@ class GpuScheduler:
             self._nodes.append(_Node(n.name, n.docker_host, devs, len(devs)))
         self._lock = threading.Condition()
         self._held: dict[str, Lease] = {}  # 장기 점유(서빙 등) tag→Lease
+        # backend=postgres면 장기 점유(hold) lease를 DB에 영속 → 재기동 후에도
+        # 서빙 GPU 점유가 살아남아 이중 할당(double-allocation)을 막는다. dev는 인메모리.
+        self._durable = get_settings().store.backend == "postgres"
+        if self._durable:
+            self._restore_held()
+
+    # ── lease 영속(backend=postgres) — kv_store(kind=gpu_lease) 사용 ──
+    _KV_KIND = "gpu_lease"
+
+    def _persist_held(self, tag: str, lease: Lease) -> None:
+        if not self._durable:
+            return
+        import json
+
+        from llmops_core.common.db import cursor
+        payload = {"tag": tag, "node": lease.node,
+                   "docker_host": lease.docker_host, "devices": lease.devices}
+        with cursor() as cur:
+            cur.execute(
+                "INSERT INTO kv_store (kind, id, payload) VALUES (%s,%s,%s) "
+                "ON CONFLICT (kind, id) DO UPDATE SET payload=EXCLUDED.payload, updated_at=now()",
+                (self._KV_KIND, tag, json.dumps(payload)),
+            )
+
+    def _forget_held(self, tag: str) -> None:
+        if not self._durable:
+            return
+        from llmops_core.common.db import cursor
+        with cursor() as cur:
+            cur.execute(
+                "DELETE FROM kv_store WHERE kind=%s AND id=%s", (self._KV_KIND, tag))
+
+    def _restore_held(self) -> None:
+        """재기동 시 DB의 hold lease를 복원 — 해당 디바이스를 free에서 제거하고 _held 재구성."""
+        from llmops_core.common.db import cursor, init_schema
+        init_schema()
+        with cursor() as cur:
+            cur.execute("SELECT payload FROM kv_store WHERE kind=%s", (self._KV_KIND,))
+            rows = cur.fetchall()
+        for (payload,) in rows:
+            tag = payload["tag"]
+            devices = list(payload.get("devices", []))
+            for node in self._nodes:
+                if node.name == payload.get("node"):
+                    for d in devices:
+                        if d in node.free:
+                            node.free.remove(d)
+                    self._held[tag] = Lease(node.name, node.docker_host, devices)
+                    break
 
     @property
     def total_gpus(self) -> int:
@@ -102,6 +151,7 @@ class GpuScheduler:
         lease = self.acquire(n_gpus)
         with self._lock:
             self._held[tag] = lease
+        self._persist_held(tag, lease)  # 재기동 생존(backend=postgres)
         return lease
 
     def release_tag(self, tag: str) -> None:
@@ -109,6 +159,7 @@ class GpuScheduler:
             lease = self._held.pop(tag, None)
         if lease is not None:
             self.release(lease)
+        self._forget_held(tag)
 
     def get_held(self, tag: str) -> Lease | None:
         with self._lock:

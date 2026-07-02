@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 
 from llmops_core.common.schemas import EvalResult
+from llmops_core.common.stores import make_release_store
 from llmops_core.governance import ReleaseGateway
 
 
@@ -28,7 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     result = EvalResult(
         suite=args.suite, model_ref=args.model_ref, data_version=args.data_version, passed=True
     )
-    gateway = ReleaseGateway()
+    # 설정(store.backend)에 따라 Postgres 스토어로 생성 → 콘솔(별도 프로세스)이 승인 요청을 본다.
+    gateway = ReleaseGateway(store=make_release_store())
     req = gateway.request(result, requested_by=args.requested_by)
     print(f"release request 생성: {req.id} (status={req.status.value}) — 승인 대기")
     return 0

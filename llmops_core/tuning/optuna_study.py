@@ -39,7 +39,10 @@ def optimize(
     *,
     tracker=None,
 ):
-    """objective(trial)->score 를 n_trials 동안 탐색. tracker로 trial 기록(선택)."""
+    """objective(trial)->score 를 n_trials 동안 탐색. tracker로 trial 기록(선택).
+
+    반환: (best_params, best_value, trials) — trials는 per-trial 파라미터+점수 기록.
+    """
     study = create_study(cfg)
 
     def wrapped(trial):
@@ -50,4 +53,9 @@ def optimize(
         return score
 
     study.optimize(wrapped, n_trials=cfg.n_trials)
-    return study.best_params, study.best_value
+    trials = [
+        {"number": t.number, "params": dict(t.params),
+         "value": t.value, "state": str(t.state)}
+        for t in study.trials
+    ]
+    return study.best_params, study.best_value, trials

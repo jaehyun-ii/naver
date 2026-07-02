@@ -6,10 +6,14 @@ LLM 스팬의 지연·토큰·비용·에러를 콘솔에서 본다(telemetry �
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 
 from llmops_core.common.config import get_settings
 from llmops_core.console.security import require_perm
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/traces", tags=["traces"],
                    dependencies=[Depends(require_perm("read"))])
@@ -33,6 +37,8 @@ def services() -> dict:
         data = _get("/api/services")
         return {"available": True, "services": data.get("data", [])}
     except Exception as exc:  # noqa: BLE001
+        # Jaeger 미도달을 "서비스 없음"으로 착각하지 않도록 로깅 + error 사유 노출.
+        logger.warning("Jaeger services 조회 실패(%s): %s", _base(), exc, exc_info=True)
         return {"available": False, "error": str(exc), "jaeger": _base()}
 
 
@@ -68,6 +74,7 @@ def traces(service: str, limit: int = 20) -> dict:
         items.sort(key=lambda x: x["duration_ms"], reverse=True)
         return {"available": True, "traces": items}
     except Exception as exc:  # noqa: BLE001
+        logger.warning("Jaeger traces 조회 실패(service=%s): %s", service, exc, exc_info=True)
         return {"available": False, "error": str(exc), "jaeger": _base()}
 
 
@@ -87,4 +94,6 @@ def trace_detail(trace_id: str) -> dict:
                                    if k.startswith(("gen_ai.", "llmops.")) or k == "error"}})
         return {"available": True, "spans": spans}
     except Exception as exc:  # noqa: BLE001
+        logger.warning("Jaeger trace 상세 조회 실패(trace_id=%s): %s", trace_id, exc,
+                       exc_info=True)
         return {"available": False, "error": str(exc)}

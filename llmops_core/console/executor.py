@@ -107,6 +107,45 @@ class RealExecutor:
             raise ExecutorError(f"$ {' '.join(cmd[:6])} … → rc={proc.returncode}\n{tail}")
         return proc.stdout
 
+    def _wait_ready(self, container: str, host_flag: list[str], *,
+                    port: int = 8000, timeout: int = 300, interval: float = 3.0) -> None:
+        """서빙 컨테이너가 모델 로드를 마치고 /health 200을 줄 때까지 폴링.
+
+        컨테이너 내부 python으로 localhost:port/health를 확인(로컬·원격 docker_host 공통).
+        컨테이너가 도중 종료되면 로그와 함께 즉시 실패한다. 준비 실패 시 ExecutorError.
+        """
+        import time
+
+        deadline = time.time() + timeout
+        probe = (
+            "import sys,urllib.request;"
+            f"urllib.request.urlopen('http://localhost:{port}/health',timeout=3);"
+            "sys.exit(0)"
+        )
+        while time.time() < deadline:
+            running = subprocess.run(
+                ["docker", *host_flag, "inspect", "-f", "{{.State.Running}}", container],
+                capture_output=True, text=True,
+            )
+            if running.returncode != 0 or running.stdout.strip() != "true":
+                logs = subprocess.run(
+                    ["docker", *host_flag, "logs", "--tail", "50", container],
+                    capture_output=True, text=True,
+                )
+                raise ExecutorError(
+                    f"서빙 컨테이너 '{container}'가 준비 전 종료됨\n"
+                    f"{(logs.stderr or logs.stdout or '')[-1500:]}"
+                )
+            health = subprocess.run(
+                ["docker", *host_flag, "exec", container, "python", "-c", probe],
+                capture_output=True, text=True,
+            )
+            if health.returncode == 0:
+                return
+            time.sleep(interval)
+        raise ExecutorError(
+            f"서빙 컨테이너 '{container}' 준비 타임아웃({timeout}s) — /health 미응답")
+
     def _run_dir(self, run_id: str) -> Path:
         d = Path(self.cfg.work_dir) / run_id
         d.mkdir(parents=True, exist_ok=True)
@@ -139,14 +178,26 @@ class RealExecutor:
             sch.release(lease)
 
     # ── 1) 학습 (SFT/DPO · LoRA/DoRA) ──
+    # 학습 CLI(llmops_core.training.run) 플래그로 변환 가능한 하이퍼파라미터 키.
+    _HP_FLAGS: dict[str, str] = {
+        "learning_rate": "--lr", "lr": "--lr",
+        "lora_r": "--lora-r",
+        "batch_size": "--batch-size", "per_device_train_batch_size": "--batch-size",
+        "grad_accum": "--grad-accum", "gradient_accumulation_steps": "--grad-accum",
+        "max_seq_length": "--max-seq-length",
+    }
+
     def finetune(
         self, run_id: str, rows: list[dict], *, base_model: str | None = None,
         method: str = "sft", use_dora: bool = False,
         max_steps: int = -1, epochs: float = 1.0,
+        hyperparams: dict | None = None, qlora: bool = False,
     ) -> str:
         """rows로 LoRA/DoRA 학습 → 어댑터 경로(호스트) 반환. 학습 loss 곡선은 self.last_loss에 저장.
 
         method="sft": rows={"messages":[...]}; method="dpo": rows={"prompt","chosen","rejected"}.
+        hyperparams: HPO 등에서 나온 오버라이드(lr/lora_r/batch_size 등) — CLI 플래그로 전달.
+        qlora: True면 --qlora(4bit, bitsandbytes)로 학습.
         """
         rd = self._run_dir(run_id)
         train_jsonl = rd / "train.jsonl"
@@ -166,6 +217,12 @@ class RealExecutor:
         ]
         if use_dora:
             tail.append("--dora")
+        if qlora:
+            tail.append("--qlora")
+        for key, val in (hyperparams or {}).items():
+            flag = self._HP_FLAGS.get(key)
+            if flag is not None and val is not None:
+                tail += [flag, str(val)]
         out = self._gpu_run(tail)
         self.last_loss = _parse_loss_curve(out)  # 차트용 step별 loss
         if not (adapter_host / "adapter_config.json").exists():
@@ -339,7 +396,16 @@ class RealExecutor:
             "-e", "HF_HUB_OFFLINE=1", "-e", "TRANSFORMERS_OFFLINE=1",
             image, *serve_args,
         ]
-        self._run(cmd, timeout=120)
+        try:
+            self._run(cmd, timeout=120)
+            # 모델 로드 완료(/health)를 확인한 뒤에만 라우팅 등록 → 트래픽이 미준비 서버로 안 감
+            self._wait_ready(self.cfg.serve_container, host_flag)
+        except Exception:
+            # 실패 시 컨테이너 정리 + GPU lease 반납(누수 방지)
+            subprocess.run(["docker", *host_flag, "rm", "-f", self.cfg.serve_container],
+                           capture_output=True, text=True)
+            sch.release_tag(f"serve:{self.cfg.serve_container}")
+            raise
         self._register_route(served_name)
         return f"http://host.docker.internal:{self.cfg.serve_port}/v1"
 
@@ -405,7 +471,14 @@ class RealExecutor:
             "-e", "HF_HUB_OFFLINE=1", "-e", "TRANSFORMERS_OFFLINE=1",
             image, *serve_args,
         ]
-        self._run(cmd, timeout=120)
+        try:
+            self._run(cmd, timeout=120)
+            self._wait_ready(cname, host_flag)
+        except Exception:
+            subprocess.run(["docker", *host_flag, "rm", "-f", cname],
+                           capture_output=True, text=True)
+            sch.release_tag(f"serve:{self.cfg.serve_container}-canary")
+            raise
         self._apply_routing(lambda ml: add_canary(
             ml, served_name, stable_base=self._stable_url(),
             canary_base=self._canary_url(), weight=weight))
@@ -424,9 +497,21 @@ class RealExecutor:
         return {"served_name": served_name, "promoted": True}
 
     def rollback_canary(self, served_name: str) -> dict:
-        """카나리 제거 — stable 100% 복귀, 카나리 컨테이너·GPU 정리."""
+        """카나리 제거 — stable 100% 복귀, 카나리 컨테이너·GPU 정리.
+
+        가드: 유효한 이전 stable이 없으면 롤백을 거부한다(rollback이 논리 모델을 통째로
+        삭제해 라우팅이 사라지는 것을 방지). 이 경우 promote 또는 재배포로 stable을 세워야 한다.
+        """
         from llmops_core.orchestration.scheduler import scheduler
-        from llmops_core.serving.canary import rollback
+        from llmops_core.serving.canary import rollback, rollout_status
+
+        path = Path(self.cfg.config_path)
+        data = yaml.safe_load(path.read_text()) if path.exists() else {}
+        status = rollout_status(data.get("model_list", []), served_name)
+        if not status.get("stable"):
+            raise ExecutorError(
+                f"'{served_name}' 롤백 불가 — 유효한 stable이 없습니다"
+                " (promote 또는 재배포로 stable을 먼저 세우세요)")
 
         self._apply_routing(lambda ml: rollback(ml, served_name))
         subprocess.run(["docker", "rm", "-f", f"{self.cfg.serve_container}-canary"],

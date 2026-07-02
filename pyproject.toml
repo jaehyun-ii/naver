@@ -55,7 +55,8 @@ training = ["unsloth", "trl>=0.9", "peft>=0.11", "transformers>=4.41", "datasets
 serving = ["vllm>=0.5"]
 tuning = ["optuna>=3.6"]
 tracking = ["mlflow>=2.13", "dvc[s3]>=3.50"]
-store = ["psycopg2-binary>=2.9"]
+# alembic: 제어평면 Postgres 스키마 마이그레이션(prod: alembic upgrade head). SQLAlchemy 동반 설치.
+store = ["psycopg2-binary>=2.9", "alembic>=1.13", "SQLAlchemy>=2.0"]
 secrets = ["hvac>=2.0"]
 evaluation = ["ragas>=0.1.7", "deepeval>=0.21"]
 telemetry-langfuse = ["langfuse>=2.36"]
@@ -74,6 +75,7 @@ all = [
     "trl>=0.9", "peft>=0.11", "transformers>=4.41", "datasets>=2.19",
     "optuna>=3.6", "mlflow>=2.13", "dvc[s3]>=3.50",
     "ragas>=0.1.7", "deepeval>=0.21",
+    "psycopg2-binary>=2.9", "alembic>=1.13", "SQLAlchemy>=2.0",
 ]
 
 [tool.setuptools.packages.find]
