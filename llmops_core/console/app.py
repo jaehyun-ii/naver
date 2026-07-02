@@ -16,6 +16,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from llmops_core.common.config import get_settings
+
 from llmops_core.console.routers import (
     audit,
     auth,
@@ -53,10 +55,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="llmops-core console", version="0.1.0", lifespan=lifespan)
 
-# 개발 편의: 프론트 dev 서버(Vite 등)에서의 호출 허용
+# CORS: 오리진 화이트리스트는 설정(cors_origins)에서. prod에서 "*"는 config 검증기가 차단.
+_cors_origins = get_settings().cors_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_origins != ["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )

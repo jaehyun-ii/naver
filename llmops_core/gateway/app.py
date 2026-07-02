@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 from llmops_core.common.config import get_settings
 from llmops_core.common.errors import AuthError, PolicyViolation
 from llmops_core.common.schemas import ChatCompletionRequest, TenantContext
+from llmops_core.common.security import make_audit_log
 from llmops_core.common.stores import make_key_store, make_ledger
 from llmops_core.gateway.cache import CacheStats
 from llmops_core.gateway.guardrails import GuardrailEngine
@@ -26,6 +28,7 @@ from llmops_core.telemetry import init_telemetry, llm_span, record_usage
 
 # ── 의존 컴포넌트 (store.backend=postgres면 Postgres 영속, 게이트웨이↔콘솔 상태 공유) ──
 key_store: VirtualKeyStore = make_key_store()
+audit = make_audit_log()  # 인증 실패 등 보안 이벤트 감사 싱크
 policy = PolicyEngine(ledger=make_ledger())
 guardrails = GuardrailEngine()
 cache_stats = CacheStats(enabled=get_settings().cache.enabled)
@@ -68,12 +71,23 @@ app = FastAPI(title="llmops-core gateway", version="0.1.0", lifespan=lifespan)
 
 async def authenticate(authorization: str = Header(...)) -> TenantContext:
     if not authorization.lower().startswith("bearer "):
+        _audit_auth_fail("gateway", "malformed_authorization")
         raise HTTPException(401, "Bearer 토큰 필요")
     raw_key = authorization.split(" ", 1)[1].strip()
     try:
         return key_store.verify(raw_key)
     except AuthError as exc:
+        _audit_auth_fail("gateway", str(exc))
         raise HTTPException(401, str(exc)) from exc
+
+
+def _audit_auth_fail(target: str, reason: str) -> None:
+    """인증 실패 감사 기록(P8: 실패 로깅 표준화). 싱크 미가용 시 graceful."""
+    try:
+        audit.record("anonymous", "auth:fail", target=target,
+                     result="denied", detail={"reason": reason})
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @app.get("/health")
@@ -89,8 +103,12 @@ class IssueKeyRequest(BaseModel):
     rpm_limit: int | None = None
 
 
-def _require_master(x_master_key: str = Header(...)) -> None:
-    if x_master_key != get_settings().gateway.master_key:
+def _require_master(x_master_key: str | None = Header(default=None)) -> None:
+    # 상수시간 비교(타이밍 공격 방지). 헤더 미존재(None)는 무효로 취급.
+    if x_master_key is None or not secrets.compare_digest(
+        x_master_key, get_settings().gateway.master_key
+    ):
+        _audit_auth_fail("gateway/admin", "master_key_mismatch")
         raise HTTPException(403, "master key 불일치")
 
 
@@ -127,6 +145,14 @@ async def chat_completions(
     ctx: TenantContext = Depends(authenticate),
 ) -> JSONResponse:
     router = get_router()
+
+    # 0) 입력 크기 상한 (자원고갈 방지) — 초과 시 400
+    gw = get_settings().gateway
+    if len(req.messages) > gw.max_messages:
+        raise HTTPException(400, f"메시지 수 초과 (max={gw.max_messages})")
+    total_chars = sum(len(m.content or "") for m in req.messages)
+    if total_chars > gw.max_input_chars:
+        raise HTTPException(400, f"입력 길이 초과 (max={gw.max_input_chars} chars)")
 
     # 1) 정책 검사 (멀티테넌시 제어 평면)
     try:

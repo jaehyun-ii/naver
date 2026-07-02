@@ -48,7 +48,8 @@ def _hash(raw: str) -> str:
 class TokenStore:
     """API 토큰 → (subject, roles). 평문 미보관."""
 
-    def issue(self, subject: str, roles: list[str]) -> str:
+    def issue(self, subject: str, roles: list[str],
+              expires_at: float | None = None) -> str:
         raise NotImplementedError
 
     def resolve(self, raw: str) -> Principal | None:
@@ -65,15 +66,22 @@ class InMemoryTokenStore(TokenStore):
     def __init__(self) -> None:
         self._by_hash: dict[str, dict] = {}
 
-    def issue(self, subject: str, roles: list[str]) -> str:
+    def issue(self, subject: str, roles: list[str],
+              expires_at: float | None = None) -> str:
         raw = "tok-" + secrets.token_urlsafe(24)
         h = _hash(raw)
-        self._by_hash[h] = {"token_id": h[:12], "subject": subject, "roles": roles}
+        self._by_hash[h] = {"token_id": h[:12], "subject": subject, "roles": roles,
+                            "expires_at": expires_at}
         return raw
 
     def resolve(self, raw: str) -> Principal | None:
         rec = self._by_hash.get(_hash(raw))
-        return Principal(rec["subject"], rec["roles"]) if rec else None
+        if not rec:
+            return None
+        exp = rec.get("expires_at")
+        if exp is not None and time.time() >= exp:
+            return None  # 만료 토큰 거부
+        return Principal(rec["subject"], rec["roles"])
 
     def list(self) -> list[dict]:
         return [{"token_id": r["token_id"], "subject": r["subject"], "roles": r["roles"]}
@@ -93,13 +101,16 @@ class PostgresTokenStore(TokenStore):
 
         init_schema()
 
-    def issue(self, subject: str, roles: list[str]) -> str:
+    def issue(self, subject: str, roles: list[str],
+              expires_at: float | None = None) -> str:
         import json
 
         from llmops_core.common.db import cursor
 
         raw = "tok-" + secrets.token_urlsafe(24)
         h = _hash(raw)
+        # NOTE(P8): expires_at 영속화는 auth_tokens.expires_at 컬럼 추가(Alembic 마이그레이션)
+        # 이후 활성화. DDL(common/db.py)은 본 변경 범위 밖이라 현재는 파라미터만 수용한다.
         with cursor() as cur:
             cur.execute(
                 "INSERT INTO auth_tokens (token_hash, token_id, subject, roles) "

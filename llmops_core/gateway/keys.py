@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import time
 from abc import ABC, abstractmethod
 
 from llmops_core.common.errors import AuthError
@@ -29,8 +30,9 @@ class VirtualKeyStore(ABC):
         allowed_models: list[str] | None = None,
         monthly_budget_usd: float | None = None,
         rpm_limit: int | None = None,
+        expires_at: float | None = None,
     ) -> str:
-        """raw 가상키(평문)를 반환. 저장소에는 해시만 보관."""
+        """raw 가상키(평문)를 반환. 저장소에는 해시만 보관. expires_at(epoch초) 초과 시 무효."""
 
     @abstractmethod
     def verify(self, raw_key: str) -> TenantContext:
@@ -53,6 +55,7 @@ class InMemoryKeyStore(VirtualKeyStore):
 
     def __init__(self) -> None:
         self._by_hash: dict[str, TenantContext] = {}
+        self._expiry: dict[str, float] = {}  # key_hash → expires_at(epoch초)
 
     def issue(
         self,
@@ -61,6 +64,7 @@ class InMemoryKeyStore(VirtualKeyStore):
         allowed_models: list[str] | None = None,
         monthly_budget_usd: float | None = None,
         rpm_limit: int | None = None,
+        expires_at: float | None = None,
     ) -> str:
         raw = "sk-" + secrets.token_urlsafe(24)
         h = _hash(raw)
@@ -71,16 +75,24 @@ class InMemoryKeyStore(VirtualKeyStore):
             monthly_budget_usd=monthly_budget_usd,
             rpm_limit=rpm_limit,
         )
+        if expires_at is not None:
+            self._expiry[h] = expires_at
         return raw
 
     def verify(self, raw_key: str) -> TenantContext:
-        ctx = self._by_hash.get(_hash(raw_key))
+        h = _hash(raw_key)
+        ctx = self._by_hash.get(h)
         if ctx is None:
             raise AuthError("유효하지 않은 가상키")
+        exp = self._expiry.get(h)
+        if exp is not None and time.time() >= exp:
+            raise AuthError("만료된 가상키")
         return ctx
 
     def revoke(self, raw_key: str) -> None:
-        self._by_hash.pop(_hash(raw_key), None)
+        h = _hash(raw_key)
+        self._by_hash.pop(h, None)
+        self._expiry.pop(h, None)
 
     def list_keys(self) -> list[TenantContext]:
         return list(self._by_hash.values())
@@ -89,6 +101,7 @@ class InMemoryKeyStore(VirtualKeyStore):
         for h, ctx in list(self._by_hash.items()):
             if ctx.key_id == key_id:
                 del self._by_hash[h]
+                self._expiry.pop(h, None)
                 return True
         return False
 
@@ -108,6 +121,7 @@ class PostgresKeyStore(VirtualKeyStore):
         allowed_models: list[str] | None = None,
         monthly_budget_usd: float | None = None,
         rpm_limit: int | None = None,
+        expires_at: float | None = None,
     ) -> str:
         import json
 
@@ -115,6 +129,8 @@ class PostgresKeyStore(VirtualKeyStore):
 
         raw = "sk-" + secrets.token_urlsafe(24)
         h = _hash(raw)
+        # NOTE(P8): expires_at 영속화는 virtual_keys.expires_at 컬럼 추가(Alembic 마이그레이션)
+        # 이후 활성화. DDL(common/db.py)은 본 변경 범위 밖이라 현재는 파라미터만 수용한다.
         with cursor() as cur:
             cur.execute(
                 "INSERT INTO virtual_keys "

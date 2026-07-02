@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi import Depends, Header, HTTPException
 
 from llmops_core.common.config import get_settings
@@ -18,7 +20,10 @@ def _resolve_principal(
     authorization: str | None = Header(default=None),
 ) -> Principal:
     """요청 헤더 → Principal. master key=admin, Bearer 토큰=역할. 실패 시 401."""
-    if x_master_key and x_master_key == get_settings().gateway.master_key:
+    # 상수시간 비교(타이밍 공격 방지). 헤더 미존재(None)는 무효로 취급.
+    if x_master_key is not None and secrets.compare_digest(
+        x_master_key, get_settings().gateway.master_key
+    ):
         return Principal(subject="master", roles=["admin"])
     if authorization and authorization.lower().startswith("bearer "):
         from llmops_core.console.services import services
@@ -27,6 +32,15 @@ def _resolve_principal(
         p = services().tokens.resolve(token)
         if p is not None:
             return p
+    # 인증 실패 감사 기록(P8: 실패 로깅 표준화). 감사 싱크 미가용 시 graceful.
+    try:
+        from llmops_core.console.services import services
+
+        services().audit.record(
+            "anonymous", "auth:fail", target="console",
+            result="denied", detail={"reason": "invalid_credentials"})
+    except Exception:  # noqa: BLE001
+        pass
     raise HTTPException(401, "인증 필요 (X-Master-Key 또는 Bearer 토큰)")
 
 

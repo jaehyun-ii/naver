@@ -1,73 +1,140 @@
-# H100(공용 서버) 전용 compose — MLflow+Postgres+MinIO 인프라 + 콘솔(real 모드).
+# H100(공용 서버) 전용 compose — MLflow+Postgres+MinIO+Redis+Qdrant 인프라 + 콘솔(real 모드) + web.
 # GB10용 docker-compose.yaml과 달리: ①named 볼륨 대신 /raid/workspace/jaehyun bind-mount
 # ②포트 25xxx 대역(충돌 회피) ③x86 이미지 ④콘솔에 docker.sock+real-mode env+MLflow+postgres
-# ⑤빈 GPU(4·5·6) 스케줄. 실행: docker compose -f deploy/docker-compose.h100.yaml up -d
+# ⑤빈 GPU(4·5·6) 스케줄.
+#
+# 시크릿은 deploy/.env 로 주입(리포 커밋 금지, deploy/.env.example 참고).
+# 실행: docker compose --env-file deploy/.env -f deploy/docker-compose.h100.yaml up -d
 name: llmops-h100
 
 services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: mlflow
-      POSTGRES_PASSWORD: mlflow
-      POSTGRES_DB: mlflow
+      POSTGRES_USER: ${POSTGRES_USER:-mlflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?deploy/.env에 POSTGRES_PASSWORD 설정 필요}
+      POSTGRES_DB: ${POSTGRES_DB:-mlflow}
     volumes: ["/raid/workspace/jaehyun/infra/pg:/var/lib/postgresql/data"]
     ports: ["25432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mlflow}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-04-08T15-41-24Z
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?deploy/.env에 MINIO_ROOT_USER 설정 필요}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?deploy/.env에 MINIO_ROOT_PASSWORD 설정 필요}
     volumes: ["/raid/workspace/jaehyun/infra/minio:/data"]
     ports: ["29000:9000", "29001:9001"]
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local 2>/dev/null || curl -sf http://localhost:9000/minio/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   minio-init:
     image: minio/mc:latest
-    depends_on: [minio]
+    depends_on:
+      minio: { condition: service_started }
     entrypoint: >
-      /bin/sh -c "until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 2; done;
-      mc mb -p local/dev-demo-models local/dev-demo-datasets local/dev-shared-eval; echo buckets ready"
+      /bin/sh -c "until mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}; do sleep 2; done;
+      mc mb -p local/prod-demo-models local/prod-demo-datasets local/prod-shared-eval
+      local/dev-demo-models local/dev-demo-datasets local/dev-shared-eval; echo buckets ready"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    restart: on-failure
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes: ["/raid/workspace/jaehyun/infra/redis:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    volumes: ["/raid/workspace/jaehyun/infra/qdrant:/qdrant/storage"]
+    ports: ["26333:6333"]
+    restart: unless-stopped
 
   jaeger:
-    image: jaegertracing/all-in-one:latest
+    image: jaegertracing/all-in-one:1.62.0
     environment:
       COLLECTOR_OTLP_ENABLED: "true"      # OTLP gRPC(:4317)/HTTP(:4318) 수신
+      # NOTE(P8): all-in-one은 인메모리 — 운영 영속은 Cassandra/ES 백엔드 또는 Tempo로 전환 필요.
     ports: ["26686:16686", "24317:4317"]  # 26686=Query UI(직접 접근 시), 콘솔은 내부망으로
+    restart: unless-stopped
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v3.14.0
-    depends_on: [postgres, minio]
+    depends_on:
+      postgres: { condition: service_healthy }
+      minio: { condition: service_started }
     command: >
       /bin/sh -c "pip install psycopg2-binary boto3 >/dev/null 2>&1;
       mlflow server --host 0.0.0.0 --port 5000
-      --backend-store-uri postgresql://mlflow:mlflow@postgres/mlflow
-      --artifacts-destination s3://dev-demo-models"
+      --backend-store-uri postgresql://$${MLFLOW_PG_USER}:$${MLFLOW_PG_PASSWORD}@postgres/$${MLFLOW_PG_DB}
+      --artifacts-destination s3://prod-demo-models"
     environment:
-      MLFLOW_SERVER_ALLOWED_HOSTS: "*"
+      # 내부 서비스명만 허용(와일드카드 금지). 직접 접근은 :25000 리버스프록시 뒤에 두기.
+      MLFLOW_SERVER_ALLOWED_HOSTS: "mlflow,localhost,127.0.0.1"
       GUNICORN_CMD_ARGS: "--timeout 120"
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
-      AWS_ACCESS_KEY_ID: minioadmin
-      AWS_SECRET_ACCESS_KEY: minioadmin
+      MLFLOW_PG_USER: ${POSTGRES_USER:-mlflow}
+      MLFLOW_PG_PASSWORD: ${POSTGRES_PASSWORD}
+      MLFLOW_PG_DB: ${POSTGRES_DB:-mlflow}
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
     ports: ["25000:5000"]
+    restart: unless-stopped
 
   console:
     image: llmops/core:x86
-    depends_on: [postgres, mlflow, minio, jaeger]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_started }
+      qdrant: { condition: service_started }
+      mlflow: { condition: service_started }
+      jaeger: { condition: service_started }
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock"          # real 모드 오케스트레이션(사용자 허용)
       - "/raid/workspace/jaehyun:/raid/workspace/jaehyun"      # 워크스페이스(호스트 경로 = 컨테이너 경로)
       - "/raid/workspace/jaehyun/naver/llmops_core:/app/llmops_core:ro"  # 라이브 코드(git pull 반영)
     environment:
-      LLMOPS_GATEWAY__MASTER_KEY: sk-master-changeme
+      # ── 운영 강제(config 검증기: 기본 마스터키/memory store/‘*’ CORS/PII off 거부) ──
+      LLMOPS_ENV: prod
+      LLMOPS_DOMAIN: demo
+      LLMOPS_CORS_ORIGINS: ${LLMOPS_CORS_ORIGINS:?deploy/.env에 CORS 오리진 설정 필요}
+      LLMOPS_GATEWAY__MASTER_KEY: ${LLMOPS_MASTER_KEY:?deploy/.env에 LLMOPS_MASTER_KEY 설정 필요}
       LLMOPS_STORE__BACKEND: postgres
-      LLMOPS_STORE__DSN: postgresql://mlflow:mlflow@postgres:5432/mlflow
+      LLMOPS_STORE__DSN: postgresql://${POSTGRES_USER:-mlflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mlflow}
       LLMOPS_MLFLOW__TRACKING_URI: http://mlflow:5000
+      # 공유 캐시·RPM 리미터(Redis)
+      LLMOPS_GATEWAY__REDIS_URL: redis://redis:6379/0
+      LLMOPS_CACHE__BACKEND: redis
+      # RAG 실화(Qdrant + bge-m3)
+      LLMOPS_QDRANT__URL: http://qdrant:6333
+      LLMOPS_RAG__BACKEND: qdrant
+      LLMOPS_RAG__EMBEDDER: bge-m3
+      # 안전/PII — 출력 마스킹 on(한국어 포함), 의존성 없으면 fail-closed
+      LLMOPS_GUARDRAILS__MASK_OUTPUT_PII: "true"
+      LLMOPS_GUARDRAILS__FAIL_CLOSED: "true"
       # 콘솔 통합 뷰 — MinIO 스토리지 조회(컨테이너 네트워크 서비스명)
       LLMOPS_S3__ENDPOINT_URL: http://minio:9000
-      LLMOPS_S3__ACCESS_KEY: minioadmin
-      LLMOPS_S3__SECRET_KEY: minioadmin
+      LLMOPS_S3__ACCESS_KEY: ${MINIO_ROOT_USER}
+      LLMOPS_S3__SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       # 콘솔 통합 뷰 — Jaeger 트레이스(송출 OTLP + 조회 Query API)
       LLMOPS_TELEMETRY__OTLP_ENDPOINT: http://jaeger:4317
       LLMOPS_TELEMETRY__JAEGER_QUERY_URL: http://jaeger:16686
@@ -85,6 +152,12 @@ services:
     command: ["uvicorn", "llmops_core.console.app:app", "--host", "0.0.0.0", "--port", "4100"]
     # 정문은 web(nginx). console은 내부 API 전용 — 24101은 직접 디버그용.
     ports: ["24101:4100"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4100/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
 
   # 프런트엔드(React SPA) — nginx가 정적 서빙 + /api를 console로 프록시. 정문 :24100.
   web:
@@ -92,6 +165,7 @@ services:
       context: ..
       dockerfile: deploy/web/Dockerfile
     image: llmops/web:x86
-    depends_on: [console]
+    depends_on:
+      console: { condition: service_started }
     ports: ["24100:80"]
     restart: unless-stopped

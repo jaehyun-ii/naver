@@ -8,8 +8,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 기본값으로 절대 운영 기동 금지 대상(placeholder). prod/staging에서 이 값이면 fail-fast.
+PLACEHOLDER_MASTER_KEY = "sk-master-changeme"
+PLACEHOLDER_S3_SECRET = "minioadmin"
 
 
 class S3Settings(BaseModel):
@@ -34,11 +38,17 @@ class S3Settings(BaseModel):
 
 
 class GatewaySettings(BaseModel):
-    master_key: str = "sk-master-changeme"
+    master_key: str = PLACEHOLDER_MASTER_KEY
     config_path: str = "./config/model_list.yaml"
-    redis_url: str | None = None  # 응답 캐시(선택)
+    redis_url: str | None = None  # 응답 캐시·RPM 리미터 공유 백엔드(다중 인스턴스). None이면 인메모리.
     # 콘솔이 게이트웨이 관리 API(캐시 통계 등)를 조회할 베이스 URL. 컴포즈에선 서비스명 사용.
     base_url: str = "http://localhost:4000"
+    # 요청 입력 상한(자원고갈 방지). 초과 시 400.
+    max_messages: int = 200
+    max_input_chars: int = 200_000
+    # self-host 모델 토큰 단가(USD/token). litellm 가격표에 없는 커스텀 모델의 비용/예산 산정에 사용.
+    # {모델명: {"input": 0.0, "output": 0.0}}. 미정의 모델은 비용 0 대신 경고 후 0 처리.
+    pricing: dict[str, dict[str, float]] = Field(default_factory=dict)
 
 
 class CacheSettings(BaseModel):
@@ -62,7 +72,11 @@ class GuardrailSettings(BaseModel):
     enabled: bool = True
     block_on_injection: bool = True  # 인젝션 탐지 시 요청 차단(False면 통과·로깅만)
     block_on_banned: bool = True  # 금칙어 출력 차단
-    mask_output_pii: bool = False  # 출력 PII 마스킹(Presidio 필요)
+    mask_output_pii: bool = False  # 출력 PII 마스킹(Presidio 필요). prod 강제 on(검증기).
+    mask_input_pii: bool = False  # 입력 PII 마스킹/검사
+    pii_languages: list[str] = Field(default_factory=lambda: ["ko", "en"])  # PII 인식 언어
+    # 마스커/분류모델 의존성 미가용 시 동작: True면 요청 차단(fail-closed), False면 통과(로깅).
+    fail_closed: bool = False
     banned_terms: list[str] = Field(default_factory=list)
     # 모델 기반 가드레일 — model_list.yaml의 논리명(예: LlamaGuard 서빙). None이면 휴리스틱만.
     # 분류 모델이 'unsafe' 판정 시 입력 차단(휴리스틱과 OR 결합).
@@ -175,6 +189,8 @@ class Settings(BaseSettings):
 
     env: str = "dev"  # dev | staging | prod
     domain: str = "demo"
+    # 콘솔/게이트웨이 CORS 허용 오리진. prod에서 "*"는 금지(검증기).
+    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
 
     s3: S3Settings = Field(default_factory=S3Settings)
     gateway: GatewaySettings = Field(default_factory=GatewaySettings)
@@ -193,6 +209,41 @@ class Settings(BaseSettings):
     def bucket(self, purpose: str) -> str:
         """버킷 명명 규칙 `{env}-{domain}-{purpose}` (클라우드 호환 고정)."""
         return f"{self.env}-{self.domain}-{purpose}"
+
+    @property
+    def is_prod(self) -> bool:
+        return self.env in ("staging", "prod")
+
+    @model_validator(mode="after")
+    def _enforce_prod_safety(self) -> "Settings":
+        """운영(env=staging|prod) 기동 시 PoC 기본값을 거부(fail-fast).
+
+        dev에서는 무동작 — 데모/로컬 편의 유지. 운영 배포는 반드시 실값을 주입해야 기동된다.
+        """
+        if not self.is_prod:
+            return self
+        errs: list[str] = []
+        if self.gateway.master_key in (PLACEHOLDER_MASTER_KEY, ""):
+            errs.append("gateway.master_key 가 기본/빈 값입니다 (LLMOPS_GATEWAY__MASTER_KEY 주입 필요).")
+        if self.store.backend != "postgres":
+            errs.append("store.backend 는 prod에서 'postgres' 여야 합니다 (인메모리는 휘발).")
+        if self.s3.secret_key == PLACEHOLDER_S3_SECRET:
+            errs.append("s3.secret_key 가 기본값(minioadmin)입니다 (실 크리덴셜 주입 필요).")
+        if self.cors_origins == ["*"]:
+            errs.append("cors_origins 에 '*' 는 prod에서 금지입니다 (오리진 화이트리스트 지정).")
+        if not self.guardrails.mask_output_pii:
+            errs.append("guardrails.mask_output_pii 는 prod에서 on 이어야 합니다 (출력 PII 마스킹).")
+        if self.rag.serving_enabled and (
+            self.rag.embedder == "hashing" or self.rag.backend == "memory"
+        ):
+            errs.append("rag 서빙 활성 시 embedder=bge-m3·backend=qdrant 여야 합니다 (해싱/인메모리 금지).")
+        if self.cache.enabled and self.cache.backend != "redis" and not self.gateway.redis_url:
+            errs.append("prod 캐시/리미터는 redis 공유 백엔드 권장 — gateway.redis_url 미설정.")
+        if errs:
+            raise ValueError(
+                "운영 설정 검증 실패 (env=" + self.env + "):\n  - " + "\n  - ".join(errs)
+            )
+        return self
 
 
 @lru_cache
