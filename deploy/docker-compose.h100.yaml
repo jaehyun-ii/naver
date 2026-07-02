@@ -83,4 +83,15 @@ services:
       LLMOPS_EXEC__GATEWAY_CONTAINER: jh-no-gateway
       LLMOPS_ORCH__NODES: '[{"name":"local","devices":[4,5,6]}]'
     command: ["uvicorn", "llmops_core.console.app:app", "--host", "0.0.0.0", "--port", "4100"]
-    ports: ["24100:4100"]
+    # 정문은 web(nginx). console은 내부 API 전용 — 24101은 직접 디버그용.
+    ports: ["24101:4100"]
+
+  # 프런트엔드(React SPA) — nginx가 정적 서빙 + /api를 console로 프록시. 정문 :24100.
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web/Dockerfile
+    image: llmops/web:x86
+    depends_on: [console]
+    ports: ["24100:80"]
+    restart: unless-stopped
