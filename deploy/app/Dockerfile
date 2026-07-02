@@ -23,8 +23,15 @@ COPY pyproject.toml README.md ./
 COPY llmops_core ./llmops_core
 COPY config ./config
 
-# 코어 글루 + 게이트웨이(litellm) + 영속 스토어(psycopg2) + 추적(mlflow client).
-RUN pip install --no-cache-dir -e ".[gateway,store,tracking]"
+# 설치 extra는 빌드 인자로 선택. 기본(gateway 슬림) vs 콘솔 prod(quality/rag/tuning 포함).
+#   콘솔 prod: --build-arg EXTRAS="gateway,store,tracking,quality,rag,tuning"
+ARG EXTRAS="gateway,store,tracking"
+RUN pip install --no-cache-dir -e ".[${EXTRAS}]"
+
+# PII(presidio)용 spaCy 모델 — quality extra 포함 빌드에서만 설치(en 대형 + ko).
+RUN if echo "${EXTRAS}" | grep -q quality; then \
+      python -m spacy download en_core_web_lg && python -m spacy download ko_core_news_sm ; \
+    fi
 
 EXPOSE 4000 4100
 

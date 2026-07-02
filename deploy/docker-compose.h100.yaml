@@ -100,7 +100,12 @@ services:
     restart: unless-stopped
 
   console:
-    image: llmops/core:x86
+    image: llmops/core:prod
+    build:
+      context: ..
+      dockerfile: deploy/app/Dockerfile
+      args:
+        EXTRAS: "gateway,store,tracking,quality,rag,tuning"
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
