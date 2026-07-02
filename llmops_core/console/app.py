@@ -14,7 +14,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -93,9 +93,22 @@ def health() -> dict:
 
 _STATIC = Path(__file__).parent / "static"
 if _STATIC.exists():
+    # Vite 빌드 산출물(React SPA). 해시된 자산은 /assets 하위에 위치한다.
+    _ASSETS = _STATIC / "assets"
+    if _ASSETS.exists():
+        app.mount("/assets", StaticFiles(directory=str(_ASSETS)), name="assets")
 
-    @app.get("/")
+    @app.get("/", include_in_schema=False)
     def index() -> FileResponse:
         return FileResponse(_STATIC / "index.html")
 
-    app.mount("/", StaticFiles(directory=str(_STATIC), html=True), name="static")
+    # SPA 폴백(React Router): /api 외의 미매칭 경로는 실제 정적 파일이면 그대로,
+    # 아니면 index.html을 돌려줘 클라이언트 라우팅이 딥링크·새로고침에서도 동작하게 한다.
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str) -> FileResponse:
+        if full_path.startswith("api"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        candidate = (_STATIC / full_path).resolve()
+        if candidate.is_file() and str(candidate).startswith(str(_STATIC.resolve())):
+            return FileResponse(candidate)
+        return FileResponse(_STATIC / "index.html")
