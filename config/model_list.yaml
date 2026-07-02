@@ -1,16 +1,26 @@
+# self-host 커스텀 모델은 litellm 공개 가격표에 없으므로 단가를 여기 명시한다.
+# input/output_cost_per_token 은 USD/token PLACEHOLDER 값이다(실측 원가로 교체 필요).
+# 이 값으로 litellm-native 비용 산정(cost_per_token)이 동작하며, gateway.pricing 설정이
+# 있으면 그쪽이 우선한다(router.estimate_cost 참고).
 model_list:
 - model_name: hcx-seed-0_5b
   litellm_params:
     model: openai/hcx-seed-0_5b
     api_base: http://host.docker.internal:8000/v1
     api_key: dummy
+    input_cost_per_token: 0.0000002   # PLACEHOLDER (USD/token)
+    output_cost_per_token: 0.0000006  # PLACEHOLDER (USD/token)
 - model_name: hcx-seed-3b
   litellm_params:
     model: openai/hcx-seed-3b
     api_base: http://localhost:8001/v1
     api_key: dummy
+    input_cost_per_token: 0.0000002   # PLACEHOLDER (USD/token)
+    output_cost_per_token: 0.0000006  # PLACEHOLDER (USD/token)
 - model_name: hcx-seed-tuned
   litellm_params:
     model: openai/hcx-seed-tuned
     api_base: http://host.docker.internal:8020/v1
     api_key: dummy
+    input_cost_per_token: 0.0000002   # PLACEHOLDER (USD/token)
+    output_cost_per_token: 0.0000006  # PLACEHOLDER (USD/token)

@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from llmops_core.common.errors import OptionalDependencyError
 from llmops_core.common.security import Principal
 from llmops_core.console.security import require_perm
 from llmops_core.rag import RagPipeline
@@ -20,9 +21,14 @@ _pipeline: RagPipeline | None = None
 
 
 def _rag() -> RagPipeline:
+    """설정(rag.backend/embedder) 기반 서빙 파이프라인. qdrant/bge-m3 선택 시 해당
+    선택 의존성이 필요하며, 없으면 503으로 명확히 안내한다(모듈 import는 항상 성공)."""
     global _pipeline
     if _pipeline is None:
-        _pipeline = RagPipeline()
+        try:
+            _pipeline = RagPipeline()
+        except OptionalDependencyError as exc:
+            raise HTTPException(503, str(exc)) from exc
     return _pipeline
 
 
@@ -48,7 +54,11 @@ def ingest(
 ) -> dict:
     if not body.texts:
         raise HTTPException(422, "수집할 텍스트가 비었습니다")
-    n = _rag().ingest(body.texts, ids=body.ids, metadata=body.metadata)
+    try:
+        # qdrant 경로는 llama_index(청킹) 선택 의존성이 필요.
+        n = _rag().ingest(body.texts, ids=body.ids, metadata=body.metadata)
+    except OptionalDependencyError as exc:
+        raise HTTPException(503, str(exc)) from exc
     return {"ingested": n, "total": _rag().store.count()}
 
 

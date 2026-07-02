@@ -70,23 +70,24 @@ class InMemoryVectorStore:
 
 
 class QdrantVectorStore:
-    """Qdrant 백엔드(lazy). 대규모·다중인스턴스용. 인터페이스는 인메모리와 동일."""
+    """Qdrant 백엔드(lazy). 대규모·다중인스턴스용. 인터페이스는 인메모리와 동일.
+
+    컬렉션은 헤비 경로의 ensure_collection(테넌트/환경 격리 명명 + 없으면 생성)로
+    durable하게 준비된다. collection 인자는 테넌트 키로 사용된다(기본 'default').
+    """
 
     def __init__(self, collection: str, dim: int) -> None:
+        # 헤비 경로 헬퍼 재사용: 클라이언트 생성 + 컬렉션 durable 보장.
         try:
-            from qdrant_client import QdrantClient
-            from qdrant_client.models import Distance, VectorParams
+            from qdrant_client.models import PointStruct  # noqa: F401  # 조기 의존성 검증
         except ImportError as exc:  # pragma: no cover
             raise OptionalDependencyError("qdrant-client", "rag") from exc
-        cfg = get_settings().qdrant
-        self._client = QdrantClient(url=cfg.url, api_key=cfg.api_key)
-        self._collection = collection
-        existing = {c.name for c in self._client.get_collections().collections}
-        if collection not in existing:
-            self._client.create_collection(
-                collection,
-                vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
-            )
+        from llmops_core.rag.ingest import IngestConfig, ensure_collection
+        from llmops_core.rag.retriever import qdrant_client
+
+        self._client = qdrant_client()
+        # ensure_collection: 없으면 (size=dim, COSINE)로 생성 후 실제 컬렉션명 반환.
+        self._collection = ensure_collection(IngestConfig(tenant_id=collection), dim)
 
     def add(self, docs: list[Document], vecs: list[list[float]]) -> None:  # pragma: no cover
         from qdrant_client.models import PointStruct

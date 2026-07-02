@@ -16,21 +16,83 @@ _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
 
 
 # ── PII 마스킹 (Presidio, MIT) ──
-class PIIMasker:
-    """Presidio 기반 PII 탐지/익명화. 데이터 주권·개인정보 보호의 상류 게이트."""
+# 언어별 spaCy 파이프라인. Presidio 분석기는 언어당 NLP 모델이 필요하다(설치 필요).
+#   en → `python -m spacy download en_core_web_lg`
+#   ko → `pip install ko_core_news_sm` (또는 spaCy 한국어 모델)
+_SPACY_MODELS = {"en": "en_core_web_lg", "ko": "ko_core_news_sm"}
 
-    def __init__(self, lang: str = "en") -> None:
+
+class PIIMasker:
+    """Presidio 기반 PII 탐지/익명화. 데이터 주권·개인정보 보호의 상류 게이트.
+
+    다국어 지원: `languages`(예: ['ko','en'])의 각 언어로 분석기를 실행한다.
+    운영 언어가 한국어이므로 주민등록번호(RRN)·휴대폰·계좌번호용 커스텀
+    PatternRecognizer 를 'ko' 분석 경로에 등록한다.
+    """
+
+    def __init__(
+        self, languages: list[str] | None = None, lang: str | None = None
+    ) -> None:
         try:
-            from presidio_analyzer import AnalyzerEngine
+            from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
+            from presidio_analyzer.nlp_engine import NlpEngineProvider
             from presidio_anonymizer import AnonymizerEngine
         except ImportError as exc:  # pragma: no cover
             raise OptionalDependencyError("presidio-analyzer", "quality") from exc
-        self.lang = lang
-        self._analyzer = AnalyzerEngine()
+
+        if languages is None:
+            languages = [lang] if lang else list(get_settings().guardrails.pii_languages)
+        # 중복 제거(순서 보존). 비면 en 폴백.
+        self.languages = list(dict.fromkeys(lg for lg in languages if lg)) or ["en"]
+        self.lang = self.languages[0]  # 하위호환(단일 언어 접근자)
+
+        nlp_engine = self._build_nlp_engine(NlpEngineProvider)
+        self._analyzer = AnalyzerEngine(
+            nlp_engine=nlp_engine, supported_languages=self.languages
+        )
+        if "ko" in self.languages:
+            for rec in self._korean_recognizers(PatternRecognizer, Pattern):
+                self._analyzer.registry.add_recognizer(rec)
         self._anonymizer = AnonymizerEngine()
 
+    def _build_nlp_engine(self, provider_cls):  # noqa: ANN001
+        """요청 언어별 spaCy 모델로 NLP 엔진 구성(모델 미설치 시 create_engine 예외)."""
+        models = [
+            {"lang_code": lg, "model_name": _SPACY_MODELS.get(lg, lg)}
+            for lg in self.languages
+        ]
+        config = {"nlp_engine_name": "spacy", "models": models}
+        return provider_cls(nlp_configuration=config).create_engine()
+
+    @staticmethod
+    def _korean_recognizers(pattern_recognizer_cls, pattern_cls):  # noqa: ANN001
+        """한국어 PII용 커스텀 정규식 인식기(주민등록번호·휴대폰·계좌번호)."""
+        rrn = pattern_recognizer_cls(
+            supported_entity="KR_RRN",
+            supported_language="ko",
+            patterns=[pattern_cls("rrn", r"\b\d{6}[-\s]?[1-8]\d{6}\b", 0.85)],
+        )
+        phone = pattern_recognizer_cls(
+            supported_entity="KR_PHONE",
+            supported_language="ko",
+            patterns=[
+                pattern_cls("mobile", r"\b01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}\b", 0.8),
+                pattern_cls("landline", r"\b0\d{1,2}[-\s.]?\d{3,4}[-\s.]?\d{4}\b", 0.6),
+            ],
+        )
+        bank = pattern_recognizer_cls(
+            supported_entity="KR_BANK_ACCOUNT",
+            supported_language="ko",
+            patterns=[pattern_cls("bank", r"\b\d{2,6}-\d{2,6}-\d{2,6}(?:-\d{1,6})?\b", 0.5)],
+        )
+        return [rrn, phone, bank]
+
     def mask(self, text: str) -> str:
-        results = self._analyzer.analyze(text=text, language=self.lang)
+        results = []
+        for lg in self.languages:
+            results.extend(self._analyzer.analyze(text=text, language=lg))
+        if not results:
+            return text
         return self._anonymizer.anonymize(text=text, analyzer_results=results).text
 
 

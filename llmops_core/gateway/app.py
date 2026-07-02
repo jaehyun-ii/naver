@@ -7,16 +7,17 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from llmops_core.common.config import get_settings
 from llmops_core.common.errors import AuthError, PolicyViolation
-from llmops_core.common.schemas import ChatCompletionRequest, TenantContext
+from llmops_core.common.schemas import ChatCompletionRequest, TenantContext, Usage
 from llmops_core.common.security import make_audit_log
 from llmops_core.common.stores import make_key_store, make_ledger
 from llmops_core.gateway.cache import CacheStats
@@ -143,7 +144,7 @@ async def list_models(ctx: TenantContext = Depends(authenticate)) -> dict:
 async def chat_completions(
     req: ChatCompletionRequest,
     ctx: TenantContext = Depends(authenticate),
-) -> JSONResponse:
+) -> Response:
     router = get_router()
 
     # 0) 입력 크기 상한 (자원고갈 방지) — 초과 시 400
@@ -174,6 +175,10 @@ async def chat_completions(
         injected, _hits = get_rag().inject_context([m.model_dump() for m in req.messages])
         req.messages = [ChatMessage(**m) for m in injected]
 
+    # 3-STREAM) stream=true면 SSE로 청크 릴레이(버퍼링 금지). 사용량/비용은 종료 시 집계.
+    if req.stream:
+        return await _stream_completion(router, req, ctx)
+
     # 3) 라우팅 호출 + 트레이싱 (캐싱은 litellm 네이티브가 Router 내부에서 처리)
     with llm_span(req.model, tenant=ctx, temperature=req.temperature) as span:
         raw, usage, cache_hit = await router.acompletion(req)
@@ -188,6 +193,45 @@ async def chat_completions(
     policy.record_spend(ctx, cost)
 
     return JSONResponse(raw)
+
+
+async def _stream_completion(
+    router: GatewayRouter, req: ChatCompletionRequest, ctx: TenantContext
+) -> StreamingResponse:
+    """OpenAI 호환 SSE 스트리밍.
+
+    litellm async 스트림 청크를 `data: {json}\\n\\n` 형식으로 릴레이하고 `data: [DONE]`로
+    종료한다. 사용량/비용은 stream_options.include_usage 로 오는 마지막 usage 청크에서
+    best-effort 집계해 스팬 기록·예산 반영한다.
+    한계: 출력 가드레일(금칙어/PII 마스킹)은 청크 단위로는 적용하지 않는다(스트리밍 특성).
+          출력 마스킹이 필수인 테넌트는 비스트리밍 경로를 사용해야 한다.
+    """
+    stream = await router.astream(req)
+
+    async def event_gen():
+        final_usage = Usage()
+        model_name = req.model
+        with llm_span(req.model, tenant=ctx, temperature=req.temperature) as span:
+            try:
+                async for chunk in stream:
+                    raw = chunk.model_dump() if hasattr(chunk, "model_dump") else dict(chunk)
+                    u = raw.get("usage")
+                    if u:
+                        final_usage = Usage(
+                            prompt_tokens=u.get("prompt_tokens", 0),
+                            completion_tokens=u.get("completion_tokens", 0),
+                            total_tokens=u.get("total_tokens", 0),
+                        )
+                    if raw.get("model"):
+                        model_name = raw["model"]
+                    yield f"data: {json.dumps(raw, default=str)}\n\n"
+                yield "data: [DONE]\n\n"
+            finally:
+                cost = router.estimate_cost(req.model, final_usage)
+                record_usage(span, final_usage, response_model=model_name, cost_usd=cost)
+                policy.record_spend(ctx, cost)
+
+    return StreamingResponse(event_gen(), media_type="text/event-stream")
 
 
 def _apply_output_guardrail(raw: dict) -> None:

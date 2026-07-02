@@ -1,13 +1,16 @@
 """챗 플레이그라운드 — 가상키 인증 → 정책 적용 → 백엔드 호출 → 비용 반영.
 
-백엔드 우선순위: litellm Router(설치 시) → 없거나 실패하면 에코(데모용, 오프라인 동작).
-정책 평면(화이트리스트/RPM/예산)은 백엔드 가용성과 무관하게 항상 적용된다.
+백엔드는 litellm Router(게이트웨이와 동일 싱글톤)를 통해 호출하며, 입력 가드레일·출력
+PII 마스킹도 게이트웨이와 동일 경로를 재사용한다(정합). 백엔드 장애는 502로 노출한다
+(이전의 무조건 에코 폴백은 장애를 은폐하고 가드레일/마스킹을 우회하므로 제거).
+오프라인 데모용 에코는 dev(비운영) 환경에서만 opt-in 폴백으로 유지한다.
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from llmops_core.common.config import get_settings
 from llmops_core.common.errors import AuthError, PolicyViolation
 from llmops_core.common.schemas import ChatCompletionRequest, Usage
 from llmops_core.console.schemas import ChatBody, ChatReply
@@ -15,6 +18,11 @@ from llmops_core.console.services import services
 from llmops_core.telemetry import llm_span, record_usage
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+def _dev_echo_enabled() -> bool:
+    """오프라인 데모 에코 폴백 허용 여부 — 비운영(dev)에서만 on(운영은 502로 장애 노출)."""
+    return not get_settings().is_prod
 
 
 def _echo(messages: list, model: str) -> ChatReply:
@@ -52,20 +60,38 @@ async def chat(body: ChatBody) -> ChatReply:
     except PolicyViolation as exc:
         raise HTTPException(429, str(exc)) from exc
 
-    # 3) 백엔드 호출 (litellm Router → 실패 시 에코) — OTel 스팬으로 트레이싱(Jaeger 통합 뷰)
-    with llm_span(body.model, tenant=ctx, temperature=body.temperature) as span:
-        reply = _echo(body.messages, body.model)
-        try:
-            from llmops_core.gateway.router import GatewayRouter
+    # 게이트웨이와 동일한 라우터 싱글톤·가드레일 경로를 재사용(요청마다 생성 금지·정합).
+    from llmops_core.gateway.app import (
+        _apply_output_guardrail,
+        get_router,
+        guardrails,
+    )
 
-            req = ChatCompletionRequest(
-                model=body.model,
-                messages=body.messages,
-                temperature=body.temperature,
-                max_tokens=body.max_tokens,
-            )
-            router_ = GatewayRouter()
+    # 3) 입력 가드레일 (프롬프트 인젝션) — 게이트웨이와 동일 적용
+    gin = guardrails.check_input([m.model_dump() for m in body.messages])
+    if not gin.allowed:
+        raise HTTPException(400, f"guardrail: {gin.reason}")
+
+    req = ChatCompletionRequest(
+        model=body.model,
+        messages=body.messages,
+        temperature=body.temperature,
+        max_tokens=body.max_tokens,
+    )
+
+    # 4) 백엔드 호출 + 트레이싱(OTel 스팬 — Jaeger 통합 뷰)
+    with llm_span(body.model, tenant=ctx, temperature=body.temperature) as span:
+        try:
+            router_ = get_router()
             raw, usage, cache_hit = await router_.acompletion(req)
+        except Exception as exc:  # noqa: BLE001 — 백엔드 미가용/litellm 오류
+            if not _dev_echo_enabled():
+                # 운영: 장애를 은폐하지 않고 502로 노출.
+                raise HTTPException(502, f"백엔드 호출 실패: {exc}") from exc
+            reply = _echo(body.messages, body.model)  # dev 오프라인 데모 폴백
+        else:
+            # 5) 출력 가드레일(금칙어 차단·PII 마스킹) — 게이트웨이와 동일 적용
+            _apply_output_guardrail(raw)
             cost = 0.0 if cache_hit else router_.estimate_cost(body.model, usage)
             reply = ChatReply(
                 content=raw["choices"][0]["message"]["content"],
@@ -74,11 +100,9 @@ async def chat(body: ChatBody) -> ChatReply:
                 usage=usage.model_dump(),
                 cost_usd=cost,
             )
-        except Exception:  # noqa: BLE001 — litellm 미설치/백엔드 미가용 시 에코 폴백
-            pass
         record_usage(span, Usage(**reply.usage), response_model=reply.model,
                      cost_usd=reply.cost_usd)
 
-    # 4) 비용 반영 (예산 통제)
+    # 6) 비용 반영 (예산 통제)
     svc.policy.record_spend(ctx, reply.cost_usd)
     return reply
