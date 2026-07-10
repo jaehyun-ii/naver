@@ -275,9 +275,13 @@ class Chunker:
                 st["figures"].append(x)
                 continue
             if typ == "equation":
-                if st["pieces"]:
-                    st["pieces"][-1]["text"] += "\n" + (x.get("text") or "")
-                    st["pieces"][-1]["pages"].add(page)
+                eq = (x.get("text") or "").strip()
+                if eq:
+                    if st["pieces"]:
+                        st["pieces"][-1]["text"] += "\n" + eq
+                        st["pieces"][-1]["pages"].add(page)
+                    else:                          # 문단 없이 시작하는 단독 수식도 보존
+                        st["pieces"].append({"text": eq, "pages": {page}, "enum": False})
                 continue
             if typ == "list":
                 for li in x.get("list_items", []):

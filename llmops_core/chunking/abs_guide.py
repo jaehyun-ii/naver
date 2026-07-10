@@ -344,6 +344,16 @@ class Chunker:
                     st["figures"].append(x)
                 continue
 
+            if typ == "equation":                 # 수식은 직전 문단에 병합(단독이면 새 조각)
+                eq = (x.get("text") or "").strip()
+                if st["started"] and eq:
+                    if st["pieces"]:
+                        st["pieces"][-1]["text"] += "\n" + eq
+                        st["pieces"][-1]["pages"].add(page)
+                    else:
+                        st["pieces"].append({"text": eq, "pages": {page}, "enum": False})
+                continue
+
             if typ == "list":
                 for li in x.get("list_items", []):
                     li = (li or "").strip()
