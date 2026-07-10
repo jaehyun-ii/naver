@@ -13,6 +13,7 @@ from pathlib import Path
 
 from llmops_core.common.config import get_settings
 from llmops_core.common.errors import OptionalDependencyError
+from llmops_core.rag.expansion import DEFAULT_BUDGET_CHARS, expand_context
 
 
 @dataclass
@@ -115,7 +116,11 @@ class TenantRetriever:
         return nodes[: self.cfg.rerank_top_n]      # ② 그 다음 서로 다른 조 N개
 
     def _expand_parents(self, nodes):
-        """child 노드를 소속 조(parent) 문맥으로 확장. 같은 조는 한 번만."""
+        """child 노드를 소속 조(parent) 문맥으로 확장. 같은 조는 한 번만.
+
+        확장 정책 A(예산 하강): 조 전체가 예산(4k자) 안이면 조로, 넘으면
+        같은 조 형제를 Qdrant에서 로드해 항→호 단위로 하강 재조립(expansion 참조).
+        """
         try:
             from llama_index.core.schema import NodeWithScore, TextNode
         except ImportError:  # pragma: no cover
@@ -133,9 +138,30 @@ class TenantRetriever:
             seen.add(pid)
             head = " > ".join(p for p in (row["section_path"],
                               f"{row['article_no']} {row['article_title']}".strip()) if p)
-            text = f"[{head}]\n{row['content']}" if head else row["content"]
-            meta.update(expanded="parent", matched_chunk_id=meta.get("chunk_id"),
+            if len(row["content"] or "") <= DEFAULT_BUDGET_CHARS:
+                body, level = row["content"], "article"
+            else:                                 # 병리적 거대 조(부록 등) — 항/호로 하강
+                body, level = expand_context(
+                    {**meta, "content": n.get_content() if hasattr(n, "get_content") else meta.get("text", "")},
+                    {"content": row["content"]},
+                    self._siblings(pid),
+                )
+            text = f"[{head}]\n{body}" if head else body
+            meta.update(expanded=level, matched_chunk_id=meta.get("chunk_id"),
                         article_no=row["article_no"], article_title=row["article_title"])
             out.append(NodeWithScore(node=TextNode(text=text, metadata=meta),
                                      score=getattr(n, "score", None)))
         return out
+
+    def _siblings(self, parent_chunk_id: str) -> list[dict]:
+        """같은 조의 child payload 로드(예산 하강 재조립용 — 거대 조에서만 호출)."""
+        try:
+            from qdrant_client.models import FieldCondition, Filter, MatchValue
+            got, _ = self.client.scroll(
+                collection_name=self.collection, limit=512, with_payload=True,
+                scroll_filter=Filter(must=[FieldCondition(
+                    key="parent_chunk_id", match=MatchValue(value=parent_chunk_id))]),
+            )
+            return [p.payload for p in got if p.payload]
+        except Exception:  # noqa: BLE001 — 실패 시 leaf 폴백(expand_context가 처리)
+            return []
