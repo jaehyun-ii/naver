@@ -4,6 +4,7 @@ import { ALL_ITEMS } from "./nav";
 import Home from "./pages/Home";
 import Playground from "./pages/Playground";
 import Datasets from "./pages/Datasets";
+import Documents from "./pages/Documents";
 import Dashboard from "./pages/Dashboard";
 import Releases from "./pages/Releases";
 import Wizard from "./pages/Wizard";
@@ -11,6 +12,7 @@ import Pipeline from "./pages/Pipeline";
 import Hpo from "./pages/Hpo";
 import Prompts from "./pages/Prompts";
 import Rag from "./pages/Rag";
+import Review from "./pages/Review";
 import Safety from "./pages/Safety";
 import EvalVersions from "./pages/EvalVersions";
 import Benchmark from "./pages/Benchmark";
@@ -28,6 +30,7 @@ const IMPLEMENTED: Record<string, React.ComponentType> = {
   "/": Home,
   "/play": Playground,
   "/data": Datasets,
+  "/documents": Documents,
   "/dash": Dashboard,
   "/rel": Releases,
   "/wizard": Wizard,
@@ -35,6 +38,7 @@ const IMPLEMENTED: Record<string, React.ComponentType> = {
   "/hpo": Hpo,
   "/prompt": Prompts,
   "/rag": Rag,
+  "/review": Review,
   "/safety": Safety,
   "/evalv": EvalVersions,
   "/bench": Benchmark,

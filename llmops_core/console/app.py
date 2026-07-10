@@ -28,6 +28,7 @@ from llmops_core.console.routers import (
     benchmark,
     chat,
     data,
+    documents,
     drift,
     evaluation,
     infra,
@@ -37,6 +38,7 @@ from llmops_core.console.routers import (
     prompts,
     rag,
     releases,
+    review,
     safety,
     serving,
     storage,
@@ -78,6 +80,7 @@ app.include_router(models.router)
 app.include_router(chat.router)
 app.include_router(releases.router)
 app.include_router(data.router)
+app.include_router(documents.router)
 app.include_router(pipeline.router)
 app.include_router(prompts.router)
 app.include_router(tuning.router)
@@ -88,6 +91,7 @@ app.include_router(audit.router)
 app.include_router(serving.router)
 app.include_router(drift.router)
 app.include_router(rag.router)
+app.include_router(review.router)
 app.include_router(safety.router)
 app.include_router(tracking.router)
 app.include_router(storage.router)

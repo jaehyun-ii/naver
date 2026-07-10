@@ -47,3 +47,27 @@ export async function api<T = unknown>(path: string, opts: ApiOptions = {}): Pro
   }
   return data as T;
 }
+
+// 멀티파트 업로드(파일). Content-Type은 브라우저가 boundary와 함께 설정하도록 비운다.
+export async function apiUpload<T = unknown>(path: string, form: FormData): Promise<T> {
+  const headers: Record<string, string> = {};
+  const master = getMasterKey();
+  if (master) headers["X-Master-Key"] = master;
+  const res = await fetch(path, { method: "POST", headers, body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = (data as { detail?: string }).detail || res.statusText;
+    throw new ApiError(detail, res.status);
+  }
+  return data as T;
+}
+
+// 인증 헤더를 실어 바이너리(PDF 등)를 blob으로 받는다(인라인 뷰어용).
+export async function apiBlob(path: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const master = getMasterKey();
+  if (master) headers["X-Master-Key"] = master;
+  const res = await fetch(path, { headers });
+  if (!res.ok) throw new ApiError(res.statusText, res.status);
+  return res.blob();
+}
