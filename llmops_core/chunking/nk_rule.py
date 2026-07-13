@@ -39,54 +39,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from html.parser import HTMLParser
 from pathlib import Path
 
 from ._hierarchy import resolve_units, para_of_default
-
-
-# ── table row-level splitting (strategy Rule 5: row-level retrieval) ─────────
-class _RowParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.rows: list[list[str]] = []
-        self._row: list[str] | None = None
-        self._cell: list[str] | None = None
-
-    def handle_starttag(self, tag, attrs):
-        if tag == "tr":
-            self._row = []
-        elif tag in ("td", "th") and self._row is not None:
-            self._cell = []
-
-    def handle_endtag(self, tag):
-        if tag == "tr" and self._row is not None:
-            self.rows.append(self._row)
-            self._row = None
-        elif tag in ("td", "th") and self._cell is not None and self._row is not None:
-            self._row.append(re.sub(r"\s+", " ", "".join(self._cell)).strip())
-            self._cell = None
-
-    def handle_data(self, data):
-        if self._cell is not None:
-            self._cell.append(data)
-
-
-def table_rows(html: str) -> list[list[str]]:
-    p = _RowParser()
-    try:
-        p.feed(html or "")
-    except Exception:
-        return []
-    return [r for r in p.rows if any(c.strip() for c in r)]
-
-
-def row_retrieval(header: list[str], row: list[str]) -> str:
-    if header and len(header) == len(row):
-        return " | ".join(f"{h}: {c}".strip(" :") for h, c in zip(header, row) if c.strip())
-    return " ".join(c for c in row if c.strip())
-
-
+from ._tables import row_retrieval, table_rows
 
 
 # ── structural markers ──────────────────────────────────────────────────────
