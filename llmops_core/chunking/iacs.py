@@ -79,6 +79,7 @@ RE_CSR_SECTION = re.compile(r"^SECTION\s+(\d+)\s+(\S.*)$", re.I)
 # ── reference extraction ────────────────────────────────────────────────────
 RE_REFS = [
     ("iacs_rule", re.compile(r"IACS\s+(?:UR|UI|PR|Rec(?:ommendation)?\.?)\s*[A-Z]?\d*", re.I)),
+    ("iacs_rule", re.compile(r"\bU[RI]\s+[A-Z]{1,2}\d+[a-z]?\b")),   # 접두 생략형 "UR W2"
     ("iacs_internal", re.compile(r"\b(?:Section|Chapter|Part|Table|Figure|Annex)\s+\d+(?:\.\d+)*\b", re.I)),
     ("standard", re.compile(r"(?:IEC|IEEE|ISO(?:/IEC)?|ASTM|EN)\s*[\w.\-:]{0,18}")),
     ("convention", re.compile(r"(?:IMO|SOLAS|MARPOL|Load Line|ILLC|MSC)\s*[\w.\-/()]{0,25}")),
@@ -115,6 +116,12 @@ def extract_refs(text: str) -> list[dict]:
                 seen.add(tgt.lower())
                 out.append({"ref_type": rtype, "target": tgt})
     return out
+
+
+def atom_refs(text: str, caption: str = "") -> list[dict]:
+    """표/그림 원자용 참조 — 자기 캡션 번호(그 표 자신)는 제외."""
+    cap = re.sub(r"\s+", " ", caption or "").strip()
+    return [r for r in extract_refs(text) if not (cap and cap.startswith(r["target"]))]
 
 
 def approx_tokens(text: str) -> int:
@@ -162,7 +169,11 @@ class Chunker:
             "doc_title": info["title"] or f"IACS Rec. No. {self.rec_no}",
             "part_no": "", "part_title": info["title"],
             "publisher": "IACS", "year": "2024",
-            "document_family": "csr" if self.is_csr else "recommendation",
+            # UR=Unified Requirement(강제 요건), UI=Unified Interpretation, REC=Recommendation
+            "document_family": "csr" if self.is_csr else {
+                "UR": "requirement", "UI": "interpretation", "REC": "recommendation",
+                "PR": "procedural-requirement",
+            }.get(stem.split("_")[0].upper(), "recommendation"),
             "language": "en",
         }
 
@@ -384,6 +395,7 @@ class Chunker:
                 table_nrows=len(rows), linked_table_rows=[],
                 summary="", linked_article_id=parent_id,
             )
+            tchunk["references"] = atom_refs(tchunk["retrieval_text"], cap)
             table_chunks.append(tchunk)
             header = rows[0] if rows else []
             if len(rows) >= 2 and len(header) >= 2:
@@ -399,6 +411,7 @@ class Chunker:
                         chunk_level="child", chunk_type="table_row",
                         table_caption=cap, row_index=ri, content=rtext,
                         retrieval_text=(cap + " " + rtext).strip(),
+                        references=atom_refs(rtext, cap),
                         summary="", linked_article_id=parent_id, linked_table_id=tid,
                     ))
 
@@ -415,6 +428,7 @@ class Chunker:
                 caption=cap, image_path=fg.get("img_path", ""),
                 visual_summary=vis, content=cap,
                 retrieval_text=" ".join(t for t in (cap, atitle, vis) if t),
+                references=atom_refs(" ".join((cap, vis)), cap),
                 linked_article_id=parent_id,
             ))
 

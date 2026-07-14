@@ -152,6 +152,11 @@ _KIND = {
     "supplement to":     ("Supplement to", "ABS Supplement", "supplement"),
 }
 _KIND_CONNECTORS = re.compile(r"\b(Of|For|On|To|And|The|In|A|An|Using)\b")
+# doc_category(표지 판정) → document_type. MVR/OR 같은 Rules를 'guide'로 뭉개지 않는다.
+_DOC_TYPE = {
+    "rules": "rule", "guide": "guide", "guidance-notes": "guidance",
+    "requirements": "requirement", "advisory": "advisory", "supplement": "supplement",
+}
 
 
 def _titlecase(s: str) -> str:
@@ -412,7 +417,8 @@ class Chunker:
                 suffix += 1
             parent_id = f"{parent_id}-{chr(suffix)}"
         self._seen_ids.add(parent_id)
-        kind = "appendix" if bkind == "appendix" else "guide"
+        kind = "appendix" if bkind == "appendix" else _DOC_TYPE.get(
+            self.doc_meta.get("doc_category"), "guide")
         band = bkind.upper()
         path = [self.path_root, self.doc_meta["part_title"], f"{band} {sec_no} {sec_title}".strip()]
         if grp_no and grp_no != ano:

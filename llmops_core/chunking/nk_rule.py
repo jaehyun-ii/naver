@@ -48,6 +48,10 @@ from ._tables import row_retrieval, table_rows
 # ── structural markers ──────────────────────────────────────────────────────
 RE_CHAPTER = re.compile(r"^Chapter\s+(\d+)\s+(\S.*)$", re.I)
 RE_ARTICLE = re.compile(r"^(\d+\.\d+(?:\.\d+)?)\s+(\S.*)$")   # 2.1 / 2.1.3  + title
+# 지침부 문자 접두 번호(Part K Guidance: "K1 GENERAL" / "K1.1.1 Application").
+# 숫자부를 취해 규칙부(Chapter 1 / 1.1.1)와 같은 좌표계로 맞춘다 — cross-link 키 일치.
+RE_CHAPTER_LTR = re.compile(r"^([A-Z]{1,2})(\d+[A-Z]?)\s+(\S.*)$")
+RE_ARTICLE_LTR = re.compile(r"^([A-Z]{1,2})(\d+[A-Z]?\.\d+(?:\.\d+)?)\s+(\S.*)$")
 RE_APPENDIX = re.compile(r"^Appendix\b\s*(\S.*)$", re.I)
 RE_LEADER = re.compile(r"\.{4,}|·{2,}")                       # ToC dot leaders
 RE_ENUM_ITEM = re.compile(r"^(?:\(\d{1,2}\)|\d{1,2})\s+\S")    # "1 …" / "(1) …"
@@ -65,6 +69,11 @@ RE_SEG_APPX = re.compile(r"^Appendix\b", re.I)
 RE_REFS = [
     ("nk_rule", re.compile(r"(?:ClassNK|Nippon Kaiji|NK)\s+(?:Rules?|Guidance|Regulations?)[^,.;\n]{0,40}")),
     ("nk_internal", re.compile(r"\b(?:Chapter|Part|Annex|Appendix|Table|Fig(?:ure)?)\s+\d+(?:\.\d+)*\b", re.I)),
+    # 규칙↔지침 상호인용("5.2 of the Rules" / "K1.1.1 of the Guidance") 및 문자 Part
+    ("nk_cross", re.compile(
+        r"\b[A-Z]{0,2}\d+(?:\.\d+){1,3}(?:\([0-9a-z]+\))*(?:\s*(?:and|to)\s*"
+        r"[A-Z]{0,2}\d+(?:\.\d+){1,3})?\s*(?:above|below)?\s+of\s+the\s+(?:Rules|Guidance)\b", re.I)),
+    ("nk_internal", re.compile(r"\bPart\s+[A-Z]{1,2}\b")),
     ("standard", re.compile(r"(?:IACS|IEC|ISO(?:/IEC)?|IEEE|ITU)\s*[\w.\-:]{0,18}")),
     ("convention", re.compile(r"(?:IMO|SOLAS|MARPOL|MLC|STCW|ILO|Load Line)\s*[\w.\-/]{0,25}")),
 ]
@@ -106,6 +115,12 @@ def extract_refs(text: str) -> list[dict]:
                 seen.add(tgt.lower())
                 out.append({"ref_type": rtype, "target": tgt})
     return out
+
+
+def atom_refs(text: str, caption: str = "") -> list[dict]:
+    """표/그림 원자용 참조 — 자기 캡션 번호(그 표 자신)는 제외."""
+    cap = re.sub(r"\s+", " ", caption or "").strip()
+    return [r for r in extract_refs(text) if not (cap and cap.startswith(r["target"]))]
 
 
 # ClassNK definition lines (broadened, Rule ③):
@@ -195,7 +210,17 @@ class Chunker:
             st["pieces"], st["tables"], st["figures"] = [], [], []
             st["marked"] = False
 
-        for x in self.items:
+        # 표지·Contents(목차)는 첫 밴드 헤더 앞에 온다 — 밴드가 있으면 거기서 시작해
+        # 목차 조각이 기본 seg(rule)로 새는 것을 막는다(예: 지침 전용 720 typeapproval).
+        start = 0
+        for i, x in enumerate(self.items):
+            if x.get("type") == "text" and x.get("text_level") == 1:
+                t = (x.get("text") or "").strip()
+                if RE_SEG_RULE.match(t) or RE_SEG_GUIDE.match(t):
+                    start = i
+                    break
+
+        for x in self.items[start:]:
             typ = x.get("type")
             page = x.get("page_idx")
 
@@ -251,18 +276,27 @@ class Chunker:
                 st["sec"], st["art"] = ("", ""), (None, "")
                 continue
 
-            # article: N.M or N.M.K titled heading (L2)
+            # article: N.M or N.M.K titled heading (L2) — 문자 접두형(K1.1.1)도 동일 취급
             m = RE_ARTICLE.match(raw)
-            if m and lvl == 2:
+            lm = None if m else RE_ARTICLE_LTR.match(raw)
+            if (m or lm) and lvl == 2:
                 flush()
-                ano = m.group(1)
-                title, marked = strip_star(m.group(2).strip())
+                ano = m.group(1) if m else lm.group(2)
+                title, marked = strip_star((m.group(2) if m else lm.group(3)).strip())
                 st["art"] = (ano, title); st["marked"] = marked
                 grp = ".".join(ano.split(".")[:2])
                 if ano.count(".") == 1:        # this heading *is* the N.M group
                     st["sec"] = (grp, title)
                 elif st["sec"][0] != grp:      # entered a new N.M group via a sub-clause
                     st["sec"] = (grp, "")
+                continue
+
+            # 문자 접두 장 헤딩("K1 GENERAL") — 지침부에서 Chapter 헤딩 역할
+            lm = RE_CHAPTER_LTR.match(raw)
+            if lm and lvl in (1, 2):
+                flush()
+                st["chap"] = (lm.group(2), lm.group(3).strip())
+                st["sec"], st["art"] = ("", ""), (None, "")
                 continue
 
             # body — enumerated item or paragraph
@@ -364,6 +398,7 @@ class Chunker:
                 table_nrows=len(rows), linked_table_rows=[],
                 summary="", linked_article_id=parent_id,
             )
+            tchunk["references"] = atom_refs(tchunk["retrieval_text"], cap)
             table_chunks.append(tchunk)
             header = rows[0] if rows else []
             if len(rows) >= 2 and len(header) >= 2:
@@ -379,6 +414,7 @@ class Chunker:
                         chunk_level="child", chunk_type="table_row",
                         table_caption=cap, row_index=ri, content=rtext,
                         retrieval_text=(cap + " " + rtext).strip(),
+                        references=atom_refs(rtext, cap),
                         summary="", linked_article_id=parent_id, linked_table_id=tid,
                     ))
 
@@ -395,6 +431,7 @@ class Chunker:
                 caption=cap, image_path=fg.get("img_path", ""),
                 visual_summary=vis, content=cap,
                 retrieval_text=" ".join(t for t in (cap, art_title, vis) if t),
+                references=atom_refs(" ".join((cap, vis)), cap),
                 linked_article_id=parent_id,
             ))
 

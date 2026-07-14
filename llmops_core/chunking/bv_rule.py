@@ -118,6 +118,12 @@ def extract_refs(text: str) -> list[dict]:
     return out
 
 
+def atom_refs(text: str, caption: str = "") -> list[dict]:
+    """표/그림 원자용 참조 — 자기 캡션 번호(그 표 자신)는 제외."""
+    cap = re.sub(r"\s+", " ", caption or "").strip()
+    return [r for r in extract_refs(text) if not (cap and cap.startswith(r["target"]))]
+
+
 RE_DEF = re.compile(r"^([A-Z][A-Za-z0-9 &/()\-,]{1,55}?)\s*[:=]\s+(\S.+)$")
 
 
@@ -170,6 +176,12 @@ class Chunker:
         cov = parse_cover(items)
         stem = re.sub(r"_content_list$", "", Path(source_file).stem)
         self.nrid = cov["nrid"] or stem
+        # NR=Rule Note(규칙), NI=Guidance Note(지침) — 본문도 "this Guidance Note"로 자기선언.
+        # 표지 NRID가 없으면 파일명 토큰("617-NI_2018-01" / "ni641_oct2019")으로 판정.
+        toks = re.split(r"[-_ ]+", stem.upper())
+        is_ni = (cov["nrid"] or "").upper().startswith("NI") \
+            or any(t == "NI" or re.fullmatch(r"NI\d{3,4}", t) for t in toks)
+        self.doc_type = "guidance" if is_ni else "rule"
         self.doc_meta = {
             "doc_id": (cov["nrid"] or stem).replace("-", "_").upper(),
             "doc_title": f'{cov["nrid"]} {cov["title"]}'.strip() or stem,
@@ -348,7 +360,7 @@ class Chunker:
 
         def meta(**extra) -> dict:
             base = {
-                **self.doc_meta, "document_type": "rule",
+                **self.doc_meta, "document_type": self.doc_type,
                 "part_seg_no": part_no, "part_seg_title": part_title,
                 "chapter_no": chap_no or sec_no, "chapter_title": chap_title or sec_title,
                 "section_no": grp_no or ano, "section_title": grp_title,
@@ -409,6 +421,7 @@ class Chunker:
                 table_nrows=len(rows), linked_table_rows=[],
                 summary="", linked_article_id=parent_id,
             )
+            tchunk["references"] = atom_refs(tchunk["retrieval_text"], cap)
             table_chunks.append(tchunk)
             header = rows[0] if rows else []
             if len(rows) >= 2 and len(header) >= 2:
@@ -424,6 +437,7 @@ class Chunker:
                         chunk_level="child", chunk_type="table_row",
                         table_caption=cap, row_index=ri, content=rtext,
                         retrieval_text=(cap + " " + rtext).strip(),
+                        references=atom_refs(rtext, cap),
                         summary="", linked_article_id=parent_id, linked_table_id=tid,
                     ))
 
@@ -440,6 +454,7 @@ class Chunker:
                 caption=cap, image_path=fg.get("img_path", ""),
                 visual_summary=vis, content=cap,
                 retrieval_text=" ".join(t for t in (cap, atitle, vis) if t),
+                references=atom_refs(" ".join((cap, vis)), cap),
                 linked_article_id=parent_id,
             ))
 

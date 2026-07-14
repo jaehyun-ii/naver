@@ -67,6 +67,24 @@ RE_REFS = [
     ("external_convention", re.compile(r"MARPOL[^,。\n]{0,40}")),
     ("external_rule", re.compile(r"IACS\s*(?:UR|UI|PR|Rec\.?)?[\s\w\.\-]{0,20}")),
     ("internal_appendix", re.compile(r"부록\s*[\d\-]+(?:\-\d+)?")),
+    # 국내 조항 인용 — "규칙 2편 1장 301.의 7항" / "적용지침 2편 1장 203.의 1항" /
+    # "3편 1장 102." / "1장 301.의 7항" / "104.의 3항" / "표 2.1.1" / "그림 8.2"
+    ("internal_rule", re.compile(
+        r"규칙\s*\d+\s*편(?:\s*\d+\s*장)?(?:\s*\d+\s*절)?(?:\s*\d{3,4}\.(?:\s*의\s*\d+\s*항)?)?")),
+    ("internal_rule", re.compile(
+        r"규칙\s*\d+\s*장(?:\s*\d+\s*절)?\s*\d{3,4}\.(?:\s*의\s*\d+\s*항)?")),
+    ("internal_rule", re.compile(r"규칙\s*\d{3,4}\.(?:\s*의\s*\d+\s*항)?")),
+    ("internal_guidance", re.compile(
+        r"(?:적용\s*)?지침\s*\d+\s*편(?:\s*\d+\s*장)?(?:\s*\d+\s*절)?(?:\s*\d{3,4}\.(?:\s*의\s*\d+\s*항)?)?")),
+    ("internal_guidance", re.compile(
+        r"(?:적용\s*)?지침\s*\d+\s*장(?:\s*\d+\s*절)?\s*\d{3,4}\.(?:\s*의\s*\d+\s*항)?")),
+    ("internal_guidance", re.compile(r"(?:적용\s*)?지침\s*\d{3,4}\.(?:\s*의\s*\d+\s*항)?")),
+    ("internal_article", re.compile(
+        r"(?<![\d.])\d+\s*편\s*\d+\s*장(?:\s*\d+\s*절)?(?:\s*\d{3,4}\.(?:\s*의\s*\d+\s*항)?)?")),
+    ("internal_article", re.compile(r"(?<![\d.])\d+\s*장\s*\d{3,4}\.(?:\s*의\s*\d+\s*항)?")),
+    ("internal_clause", re.compile(r"\b\d{3,4}\.\s*의\s*\d+\s*항")),
+    ("table", re.compile(r"표\s*\d+(?:\.\d+)+")),
+    ("figure", re.compile(r"그림\s*\d+(?:\.\d+)+")),
 ]
 
 # ── chunk_type heuristics ───────────────────────────────────────────────────
@@ -97,7 +115,19 @@ def extract_refs(text: str) -> list[dict]:
             if tgt and tgt not in seen:
                 seen.add(tgt)
                 out.append({"ref_type": ref_type, "target": tgt})
-    return out
+    # 포함관계 중복 제거: "2편 1장 301."은 "규칙 2편 1장 301.의 7항"의 부분이면 드랍
+    out.sort(key=lambda r: -len(r["target"]))
+    kept: list[dict] = []
+    for r in out:
+        if not any(r["target"] in k["target"] for k in kept):
+            kept.append(r)
+    return kept
+
+
+def atom_refs(text: str, caption: str = "") -> list[dict]:
+    """표/그림 원자용 참조 — 자기 캡션 번호(예: 그 표 자신의 '표 2.1.1')는 제외."""
+    cap = re.sub(r"\s+", " ", caption or "").strip()
+    return [r for r in extract_refs(text) if not (cap and cap.startswith(r["target"]))]
 
 
 def is_noise(text: str) -> bool:
@@ -338,11 +368,25 @@ class Chunker:
                 rule_anchor = i
             elif guide_anchor is None and re.match(r"^지침\s*제\s*\d+\s*편", t):
                 guide_anchor = i
+        # "지침 제N편" 표제가 추출 안 된 합본: 표제형 "…적용지침" → 러닝헤더/푸터 순으로
+        # 지침부 경계를 복원한다. guide_skip=표제 아이템이라 본문에서 빼야 하는 경우.
+        guide_skip = guide_anchor is not None
+        if guide_anchor is None:
+            guide_anchor = self._guide_titled_anchor()
+            guide_skip = guide_anchor is not None
+        if guide_anchor is None:
+            guide_anchor = self._guide_header_boundary()
         # body starts at the first *clean* article heading after each anchor
-        rule_body = self._first_article(rule_anchor or 0, guide_anchor or len(self.items))
-        guide_body = self._first_article(guide_anchor or 0, len(self.items))
-        # appendix body = first level-2 "부록 N-M" heading after the guidance body
-        for i in range(guide_body or 0, len(self.items)):
+        rule_body = self._first_article(
+            rule_anchor or 0,
+            guide_anchor if guide_anchor is not None else len(self.items))
+        # 지침 경계가 어디서도 안 잡히면 지침부 없는 단권 — guidance 세그먼트를 만들지
+        # 않는다. (예전엔 문서 처음부터 재탐색해 전체가 rule/guidance 로 중복 청킹됐다.)
+        guide_body = (self._first_article(guide_anchor, len(self.items))
+                      if guide_anchor is not None else None)
+        # appendix body = first level-2 "부록 N-M" heading after the last body start
+        appx_lo = guide_body if guide_body is not None else (rule_body or 0)
+        for i in range(appx_lo, len(self.items)):
             x = self.items[i]
             if (x.get("type") == "text" and x.get("text_level") == 2
                     and RE_APPENDIX.match((x.get("text") or "").strip())):
@@ -357,14 +401,59 @@ class Chunker:
         # 목차는 파스 단계의 dot-leader/차례 노이즈 필터가 제거하므로 새지 않는다.
         # (anchor 미검출 문서는 기존처럼 첫 조에서 시작.)
         rule_start = (rule_anchor + 1) if rule_anchor is not None else rule_body
-        guide_start = (guide_anchor + 1) if guide_anchor is not None else guide_body
+        guide_start = ((guide_anchor + 1) if guide_skip else guide_anchor) \
+            if guide_anchor is not None else guide_body
         if rule_body is not None:
-            segs.append(("rule", rule_start, rule_end))
+            # 지침부 없는 단권은 문서 제목으로 세그먼트 종류를 정한다(…지침 → guidance)
+            solo = guide_body is None and "지침" in Path(self.source_file).stem
+            segs.append(("guidance" if solo else "rule", rule_start, rule_end))
         if guide_body is not None:
             segs.append(("guidance", guide_start, end_guide))
         if appx_anchor is not None:
             segs.append(("appendix", appx_anchor, len(self.items)))
         return segs
+
+    def _guide_titled_anchor(self) -> int | None:
+        """단권 합본의 지침부 표제(예: 'FRP선 규칙 적용지침') 아이템 인덱스.
+        표지(page 0~2)와 규칙 첫 조 이전은 제외해 표지·목차 오검출을 막는다."""
+        first_art = self._first_article(0, len(self.items))
+        if first_art is None:
+            return None
+        for i in range(first_art + 1, len(self.items)):
+            x = self.items[i]
+            if x.get("type") != "text" or not x.get("text_level"):
+                continue
+            t = (x.get("text") or "").strip()
+            if (len(t) < 40 and (x.get("page_idx") or 0) > 2 and not is_noise(t)
+                    and re.search(r"적용지침$", t.strip(" 「」“”\"'"))):
+                return i
+        return None
+
+    def _guide_header_boundary(self) -> int | None:
+        """편 합본인데 표제가 텍스트로 추출 안 된 문서(예: 2편): 러닝헤더/푸터의
+        '적용지침' 표기가 시작되는 페이지를 지침부 경계로 삼는다."""
+        rule_pages, guide_pages = set(), set()
+        for x in self.items:
+            if x.get("type") not in ("header", "footer"):
+                continue
+            t = (x.get("text") or "").strip()
+            p = x.get("page_idx")
+            if p is None:
+                continue
+            if "적용지침" in t:
+                guide_pages.add(p)
+            elif re.search(r"규칙|지침|기준", t):
+                rule_pages.add(p)
+        if len(guide_pages) < 3:
+            return None
+        b = min(guide_pages)
+        if sum(1 for p in rule_pages if p < b) < 3:   # 경계 앞에 규칙부가 실재해야 합본
+            return None
+        for i, x in enumerate(self.items):
+            p = x.get("page_idx")
+            if p is not None and p >= b:
+                return i
+        return None
 
     def _first_article(self, lo: int, hi: int) -> int | None:
         for i in range(lo, hi):
@@ -578,6 +667,7 @@ class Chunker:
                 table_nrows=len(rows),
                 summary="", linked_article_id=parent_id, linked_table_rows=[],
             )
+            tchunk["references"] = atom_refs(tchunk["retrieval_text"], cap)
             table_chunks.append(tchunk)
             # 행 단위 검색 청크 — 헤더+데이터 2행 이상, 2열 이상일 때만
             header = rows[0] if rows else []
@@ -595,6 +685,7 @@ class Chunker:
                         table_caption=cap, row_index=ri,
                         content=rtext,
                         retrieval_text=(cap + " " + rtext).strip(),
+                        references=atom_refs(rtext, cap),
                         summary="", linked_article_id=parent_id, linked_table_id=tid,
                     ))
 
@@ -614,6 +705,7 @@ class Chunker:
                 ocr_text="", visual_summary="",
                 content=cap,
                 retrieval_text=" ".join(t for t in (cap, art_title, vis) if t),
+                references=atom_refs(" ".join((cap, vis)), cap),
                 linked_article_id=parent_id,
             ))
 

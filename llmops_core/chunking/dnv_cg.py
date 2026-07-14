@@ -61,7 +61,7 @@ FRONT_MATTER = ("class guideline", "foreword", "changes", "contents",
 
 # ── reference extraction ────────────────────────────────────────────────────
 RE_REFS = [
-    ("dnv_rule", re.compile(r"DNV(?:GL)?-(?:CG|RU|RP|ST|OS|SE)-[A-Z0-9\-.]+", re.I)),
+    ("dnv_rule", re.compile(r"DNV(?:GL)?-(?:CG|RU|RP|ST|OS|SE|CP)-[A-Z0-9\-.]+", re.I)),
     ("dnv_internal", re.compile(r"\b(?:Sec(?:tion)?|Ch(?:apter)?|Pt|Table|Figure|App(?:endix)?)\s*\.?\s*\d+(?:\.\d+)*\b", re.I)),
     ("standard", re.compile(r"(?:IEC|IEEE|ISO(?:/IEC)?|EN|API|NEK|DIN)\s*[\w.\-:]{0,18}")),
     ("convention", re.compile(r"(?:IMO|SOLAS|MARPOL|MSC|IACS|MODU)\s*[\w.\-/()]{0,25}")),
@@ -98,6 +98,12 @@ def extract_refs(text: str) -> list[dict]:
                 seen.add(tgt.lower())
                 out.append({"ref_type": rtype, "target": tgt})
     return out
+
+
+def atom_refs(text: str, caption: str = "") -> list[dict]:
+    """표/그림 원자용 참조 — 자기 캡션 번호(그 표 자신)는 제외."""
+    cap = re.sub(r"\s+", " ", caption or "").strip()
+    return [r for r in extract_refs(text) if not (cap and cap.startswith(r["target"]))]
 
 
 # DNV definition lines (broadened, Rule ③):
@@ -156,6 +162,13 @@ class Chunker:
         stem = re.sub(r"_content_list$", "", Path(source_file).stem)
         # doc_id는 파일 기반 고유값 — 커버 정규식은 다부 문서(-Pt1/-Pt4)의 Part를 놓쳐 충돌.
         did = re.sub(r"[^0-9A-Za-z]+", "_", stem).strip("_").upper()
+        # 시리즈로 문서종류 판정: RU=Rules, CG=Class Guideline, CP=Class Programme,
+        # OS/ST=Standard, RP=Recommended Practice. (커버 RE_DOCID는 CP를 못 잡음 → 파일명 우선)
+        sm = re.search(r"DNV(?:GL)?[-_](RU|CG|CP|OS|ST|RP|SE)(?![A-Za-z])", did) \
+            or re.search(r"DNV(?:GL)?-(RU|CG|CP|OS|ST|RP|SE)(?![A-Za-z])", cov["doc_id"] or "")
+        self.doc_type = {"RU": "rule", "CG": "guideline", "CP": "programme",
+                         "OS": "standard", "ST": "standard", "RP": "recommended-practice",
+                         "SE": "service-specification"}.get(sm.group(1) if sm else "", "guideline")
         self.doc_meta = {
             "doc_id": did,
             "doc_title": f'{cov["doc_id"]} {cov["subtitle"]}'.strip() or stem,
@@ -287,7 +300,7 @@ class Chunker:
 
         def meta(**extra) -> dict:
             base = {
-                **self.doc_meta, "document_type": "appendix" if is_appx else "guideline",
+                **self.doc_meta, "document_type": "appendix" if is_appx else self.doc_type,
                 "chapter_no": band_no, "chapter_title": band_title,      # SECTION
                 "section_no": grp_no or ano, "section_title": grp_title,  # clause group
                 "article_no": ano, "article_title": atitle,
@@ -347,6 +360,7 @@ class Chunker:
                 table_nrows=len(rows), linked_table_rows=[],
                 summary="", linked_article_id=parent_id,
             )
+            tchunk["references"] = atom_refs(tchunk["retrieval_text"], cap)
             table_chunks.append(tchunk)
             header = rows[0] if rows else []
             if len(rows) >= 2 and len(header) >= 2:
@@ -362,6 +376,7 @@ class Chunker:
                         chunk_level="child", chunk_type="table_row",
                         table_caption=cap, row_index=ri, content=rtext,
                         retrieval_text=(cap + " " + rtext).strip(),
+                        references=atom_refs(rtext, cap),
                         summary="", linked_article_id=parent_id, linked_table_id=tid,
                     ))
 
@@ -378,6 +393,7 @@ class Chunker:
                 caption=cap, image_path=fg.get("img_path", ""),
                 visual_summary=vis, content=cap,
                 retrieval_text=" ".join(t for t in (cap, atitle, vis) if t),
+                references=atom_refs(" ".join((cap, vis)), cap),
                 linked_article_id=parent_id,
             ))
 
