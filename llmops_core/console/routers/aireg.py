@@ -133,7 +133,8 @@ def qa(suite: str = "suite_v5", track: str | None = None,
 
 @router.get("/geneval")
 def geneval(suite: str = "suite_v5", offset: int = 0,
-            limit: int = Query(30, le=100), only: str = "all") -> dict:
+            limit: int = Query(30, le=300), only: str = "all",
+            track: str = "") -> dict:
     """생성 평가 뷰 — val 문항별 정답·튜닝·베이스 응답 + judge 점수/이유."""
     d = _suite_dir(suite)
     val_path = d / "sft_val.messages.jsonl"
@@ -178,6 +179,8 @@ def geneval(suite: str = "suite_v5", offset: int = 0,
         }
         row["label_match"] = (row["gold_label"] == row["tuned_label"]
                               if row["gold_label"] else None)
+        if track and row["track"] != track:
+            continue
         if only == "mismatch" and row["label_match"] is not False:
             continue
         if only == "scored" and row["tuned_score"] is None:

@@ -3,13 +3,15 @@
 import { useState } from "react";
 import {
   Box, Card, CardContent, Chip, Collapse, IconButton, MenuItem, Stack,
-  Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography,
+  Tab, Table, TableBody, TableCell, TableHead, TableRow, Tabs, TextField,
+  Typography,
 } from "@mui/material";
 import KeyboardArrowDown from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUp from "@mui/icons-material/KeyboardArrowUp";
 import { Loading, ErrorView } from "./StateViews";
 import { useApi } from "../hooks/useApi";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
+import { AIREG_TRACKS } from "./AiregData";
 
 const DEFAULT_SUITE = "suite_v5";
 
@@ -75,11 +77,18 @@ function GenRowView({ r }: { r: GenRow }) {
 /** 실생성 평가 뷰어 — 튜닝 vs 베이스 실답변·judge 채점 (성능 비교 페이지). */
 export function AiregGenEvalSection({ suite = DEFAULT_SUITE, live = true }: { suite?: string; live?: boolean }) {
   const [only, setOnly] = useState("all");
+  const [track, setTrack] = useState("");
   const { data, loading, error, reload } = useApi<{ total: number; rows: GenRow[] }>(
-    `/api/aireg/geneval?suite=${suite}&limit=40&only=${only}`, [suite, only]);
+    `/api/aireg/geneval?suite=${suite}&limit=300&only=${only}${track ? `&track=${track}` : ""}`,
+    [suite, only, track]);
   useAutoRefresh(reload, 8000, live);
   return (
     <Stack spacing={2}>
+      <Tabs value={track} onChange={(_, v) => setTrack(v)} variant="scrollable"
+        scrollButtons="auto" sx={{ minHeight: 36, "& .MuiTab-root": { minHeight: 36, py: 0.5 } }}>
+        <Tab label="전체" value="" />
+        {AIREG_TRACKS.map((t) => <Tab key={t} label={t} value={t} />)}
+      </Tabs>
       <Stack direction="row" spacing={2}>
         <TextField select size="small" label="필터" value={only} sx={{ width: 200 }}
           onChange={(e) => setOnly(e.target.value)}>
@@ -87,7 +96,7 @@ export function AiregGenEvalSection({ suite = DEFAULT_SUITE, live = true }: { su
           <MenuItem value="scored">채점 완료만</MenuItem>
           <MenuItem value="mismatch">판정 불일치만</MenuItem>
         </TextField>
-        {data && <Chip label={`${data.total}건`} sx={{ alignSelf: "center" }} />}
+        {data && <Chip label={`${data.total}건 전체 표시`} sx={{ alignSelf: "center" }} />}
       </Stack>
       {loading && !data ? <Loading /> : error ? <ErrorView message={error} /> : (
         <Card><CardContent sx={{ p: 0 }}>
