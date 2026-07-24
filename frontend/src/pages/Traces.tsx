@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import {
-  Alert, Box, Card, CardContent, Chip, LinearProgress, Stack, Table, TableBody,
+  Alert, Box, Button, Card, CardContent, Chip, LinearProgress, Stack, Table, TableBody,
   TableCell, TableHead, TableRow, TextField, MenuItem, Typography, IconButton, Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import OpenInNewOutlined from "@mui/icons-material/OpenInNew";
+import HubOutlined from "@mui/icons-material/HubOutlined";
+import RouteOutlined from "@mui/icons-material/RouteOutlined";
+import ErrorOutline from "@mui/icons-material/ErrorOutline";
+import TimerOutlined from "@mui/icons-material/TimerOutlined";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { SummaryTiles } from "../components/SummaryTiles";
+import { Histogram } from "../components/Charts";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -180,11 +187,28 @@ export default function Traces() {
         title="트레이스"
         subtitle="Jaeger 통합 뷰 — LLM 트레이스·스팬을 콘솔에서 조회(읽기전용)"
         action={
-          <Tooltip title="새로고침">
-            <IconButton onClick={refresh} aria-label="새로고침"><RefreshIcon /></IconButton>
-          </Tooltip>
+          <Stack direction="row" spacing={1} alignItems="center">
+            {services.data?.jaeger && (
+              <Button variant="outlined" size="small" startIcon={<OpenInNewOutlined />}
+                component="a" href={services.data.jaeger} target="_blank" rel="noopener">
+                Jaeger 열기
+              </Button>
+            )}
+            <Tooltip title="새로고침">
+              <IconButton onClick={refresh} aria-label="새로고침"><RefreshIcon /></IconButton>
+            </Tooltip>
+          </Stack>
         }
       />
+
+      {services.data?.available && (
+        <SummaryTiles stats={[
+          { label: "서비스", value: services.data.services?.length ?? 0, hint: "트레이싱 대상", icon: HubOutlined },
+          { label: "트레이스", value: traces.length, hint: selected ?? "서비스 선택", icon: RouteOutlined },
+          { label: "에러율", value: traces.length ? `${Math.round((traces.filter((t) => t.error).length / traces.length) * 100)}%` : "—", hint: "최근 트레이스", icon: ErrorOutline, accent: "error.main" },
+          { label: "평균 지연", value: traces.length ? `${Math.round(traces.reduce((a, t) => a + t.duration_ms, 0) / traces.length)}ms` : "—", icon: TimerOutlined },
+        ]} />
+      )}
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
@@ -221,6 +245,12 @@ export default function Traces() {
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               지연 시간 내림차순 · 최대 20건. 행을 클릭하면 스팬을 확인합니다.
             </Typography>
+            {traces.length > 1 && (
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>지연 분포</Typography>
+                <Histogram values={traces.map((t) => t.duration_ms)} unit="ms" />
+              </Box>
+            )}
             {tracesLoading && !tracesData ? (
               <Loading />
             ) : tracesError ? (

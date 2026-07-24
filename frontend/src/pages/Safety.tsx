@@ -4,8 +4,12 @@ import {
   MenuItem, Select, Stack, TextField, Typography, IconButton, Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import ShieldOutlined from "@mui/icons-material/ShieldOutlined";
+import BoltOutlined from "@mui/icons-material/Bolt";
+import ModelTrainingOutlined from "@mui/icons-material/ModelTraining";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { SummaryTiles } from "../components/SummaryTiles";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -214,6 +218,17 @@ export default function Safety() {
           </Tooltip>
         }
       />
+
+      {(cfg.data || cache.data) && (
+        <SummaryTiles stats={[
+          { label: "가드레일", value: cfg.data ? (cfg.data.guardrails.enabled ? "ON" : "OFF") : "—",
+            hint: cfg.data?.guardrails.mask_output_pii ? "PII 마스킹" : "입력·출력 점검",
+            icon: ShieldOutlined, accent: cfg.data?.guardrails.enabled ? "success.main" : "text.disabled" },
+          { label: "캐시 히트율", value: cs?.hit_rate != null ? `${Math.round(cs.hit_rate * 100)}%` : "—",
+            hint: `hits ${cs?.hits ?? 0}`, icon: BoltOutlined },
+          { label: "허용 모델", value: models.data?.models?.length ?? "—", hint: "게이트웨이", icon: ModelTrainingOutlined },
+        ]} />
+      )}
 
       <Card sx={{ mb: 3 }}>
         <CardContent>

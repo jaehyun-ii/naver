@@ -113,6 +113,14 @@ class RunPipelineBody(BaseModel):
     served_name: str = "hcx-seed-tuned"  # 배포 시 게이트웨이 논리모델명
     train_max_steps: int = 30  # 학습 step 상한(PoC 속도용; -1이면 epochs 사용)
     train_epochs: float = 1.0
+    # 학습 하이퍼파라미터 override(미지정 시 학습기 기본값 lr 2e-4 · lora_r 16 · lora_alpha 32)
+    lr: float | None = None
+    lora_r: int | None = None
+    lora_alpha: int | None = None
+    # 평가 게이트 임계값 override(예: {"answer_match": 0.5} 또는 {"token_f1": 0.3}). None이면 기본값.
+    gate_thresholds: dict[str, float] | None = None
+    # HPO 스터디 ID — 지정 시 해당 스터디의 best_params가 위 수동 하이퍼파라미터를 덮어씀.
+    hpo_id: str | None = None
     # 평가에 적용할 시스템 프롬프트(GitPromptStore 프롬프트명) — 서빙과 동일 적용(평가=서빙 정합).
     # None이면 프롬프트 없이 평가(기존 동작).
     prompt_name: str | None = None

@@ -3,9 +3,16 @@ import {
   Alert, Box, Button, Card, CardContent, Chip, LinearProgress, Stack,
   TextField, Typography, IconButton, Tooltip,
 } from "@mui/material";
+import { Link as RouterLink } from "react-router-dom";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import CloudQueueOutlined from "@mui/icons-material/CloudQueueOutlined";
+import ScienceOutlined from "@mui/icons-material/ScienceOutlined";
+import CheckCircleOutline from "@mui/icons-material/CheckCircleOutline";
+import RouteOutlined from "@mui/icons-material/RouteOutlined";
+import ChatOutlined from "@mui/icons-material/ChatOutlined";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { SummaryTiles, RichEmpty } from "../components/SummaryTiles";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -125,7 +132,15 @@ export default function Serving() {
       {notice && <Alert severity="success" sx={{ mb: 2 }}>{notice}</Alert>}
       {actionError && <ErrorView message={actionError} />}
 
-      <Card>
+      {data && (data.stable || data.canary) && (
+        <SummaryTiles stats={[
+          { label: "Stable", value: `${data.stable?.weight ?? 0}%`, hint: data.stable ? "활성" : "없음", icon: CheckCircleOutline, accent: "success.main" },
+          { label: "Canary", value: hasCanary ? `${data.canary!.weight}%` : "없음", hint: hasCanary ? "카나리 노출 중" : "단일 stable", icon: ScienceOutlined, accent: "warning.main" },
+          { label: "라우팅", value: hasCanary ? "카나리" : "단일", hint: activeName, icon: CloudQueueOutlined },
+        ]} />
+      )}
+
+      <Card variant="outlined" sx={{ borderRadius: 3 }}>
         <CardContent>
           <Typography variant="h3" gutterBottom>트래픽 분배 · {activeName}</Typography>
           {loading && !data ? (
@@ -133,7 +148,9 @@ export default function Serving() {
           ) : error ? (
             <ErrorView message={error} />
           ) : !data || (!data.stable && !data.canary) ? (
-            <EmptyView message="해당 논리 모델명의 롤아웃 정보가 없습니다. 모델명을 확인하세요." />
+            <RichEmpty icon={CloudQueueOutlined} title={`'${activeName}' 롤아웃 정보가 없습니다`}
+              hint="파이프라인 배포 단계에서 서빙이 등록되면 트래픽 분배가 여기 표시됩니다. 모델명을 확인하거나 학습을 실행하세요."
+              actionLabel="파이프라인 실행" to="/pipe" />
           ) : (
             <Stack spacing={2.5}>
               {data.stable
@@ -163,6 +180,13 @@ export default function Serving() {
                   onClick={() => act("rollback")}
                 >
                   롤백(rollback) → stable
+                </Button>
+                <Box sx={{ flex: 1 }} />
+                <Button variant="text" startIcon={<RouteOutlined />} component={RouterLink} to="/traces">
+                  트레이스·지연 보기
+                </Button>
+                <Button variant="text" startIcon={<ChatOutlined />} component={RouterLink} to="/play">
+                  플레이그라운드
                 </Button>
               </Stack>
               {!hasCanary && (

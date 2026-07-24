@@ -2,13 +2,17 @@ import { useState } from "react";
 import {
   Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogActions,
   DialogContent, DialogContentText, DialogTitle, IconButton, InputAdornment,
-  Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip,
+  LinearProgress, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField, Tooltip,
   Typography,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import VpnKeyOutlined from "@mui/icons-material/VpnKeyOutlined";
+import GroupsOutlined from "@mui/icons-material/GroupsOutlined";
+import PaidOutlined from "@mui/icons-material/PaidOutlined";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { SummaryTiles } from "../components/SummaryTiles";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -128,6 +132,14 @@ export default function Keys() {
         }
       />
 
+      {(data?.length ?? 0) > 0 && (
+        <SummaryTiles stats={[
+          { label: "발급 키", value: data!.length, hint: "활성 가상키", icon: VpnKeyOutlined },
+          { label: "테넌트", value: new Set(data!.map((k) => k.tenant_id)).size, icon: GroupsOutlined },
+          { label: "총 사용액", value: `$${data!.reduce((a, k) => a + (k.spent_usd ?? 0), 0).toFixed(2)}`, hint: "월 누적", icon: PaidOutlined, accent: "success.main" },
+        ]} />
+      )}
+
       <Card sx={{ mb: 3 }}>
         <CardContent>
           <Typography variant="h3" gutterBottom>가상키 발급</Typography>
@@ -221,8 +233,7 @@ export default function Keys() {
                   <TableCell>key_id</TableCell>
                   <TableCell>테넌트</TableCell>
                   <TableCell>허용 모델</TableCell>
-                  <TableCell align="right">예산 USD</TableCell>
-                  <TableCell align="right">사용액 USD</TableCell>
+                  <TableCell sx={{ minWidth: 190 }}>예산 사용</TableCell>
                   <TableCell align="right">RPM</TableCell>
                   <TableCell align="right">액션</TableCell>
                 </TableRow>
@@ -245,10 +256,25 @@ export default function Keys() {
                         </Stack>
                       )}
                     </TableCell>
-                    <TableCell align="right">
-                      {k.monthly_budget_usd == null ? "무제한" : k.monthly_budget_usd.toFixed(2)}
+                    <TableCell>
+                      {k.monthly_budget_usd == null ? (
+                        <Typography variant="caption" color="text.secondary">무제한 · ${k.spent_usd.toFixed(2)} 사용</Typography>
+                      ) : (() => {
+                        const pct = Math.min(100, (k.spent_usd / (k.monthly_budget_usd || 1)) * 100);
+                        const color: "error" | "warning" | "success" = pct >= 90 ? "error" : pct >= 70 ? "warning" : "success";
+                        return (
+                          <Box sx={{ minWidth: 170 }}>
+                            <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+                              <Typography variant="caption" sx={{ fontFamily: "ui-monospace, monospace" }}>
+                                ${k.spent_usd.toFixed(2)} / ${k.monthly_budget_usd.toFixed(2)}
+                              </Typography>
+                              <Typography variant="caption" color={`${color}.main`} fontWeight={700}>{Math.round(pct)}%</Typography>
+                            </Stack>
+                            <LinearProgress variant="determinate" value={pct} color={color} sx={{ height: 5, borderRadius: 2, mt: 0.25 }} />
+                          </Box>
+                        );
+                      })()}
                     </TableCell>
-                    <TableCell align="right">{k.spent_usd.toFixed(4)}</TableCell>
                     <TableCell align="right">{k.rpm_limit ?? "무제한"}</TableCell>
                     <TableCell align="right">
                       <Button

@@ -102,6 +102,80 @@ def _strip_enrich(chunks: list[dict]) -> list[dict]:
     return chunks
 
 
+def _promote_row_tables(chunks: list[dict]) -> list[dict]:
+    """행 청크를 가진 표 원자를 chunk_level=parent 로 승격.
+
+    조:본문 관계와 동형 — parent 는 저장·문맥·렌더 단위(색인 제외), 검색은 행(leaf)이
+    담당한다. 표의 parent_chunk_id 는 그대로 소속 조를 가리키므로 계층은
+    조(parent) > 표(parent) > 행(child) 의 중첩 parent 가 된다.
+    행이 안 만들어진 표(단일행·1열 등)는 child 로 남아 색인에 잔류한다."""
+    with_rows = {c.get("parent_chunk_id") for c in chunks
+                 if c.get("chunk_type") == "table_row"}
+    for c in chunks:
+        if c.get("chunk_type") == "table" and c.get("chunk_id") in with_rows:
+            c["chunk_level"] = "parent"
+    return chunks
+
+
+# 그림/표 캡션 번호("그림 1.2.1 …" / "Table 5 …") → (kind, 번호) 정규화.
+# 인용 target(references[].target)과 원자 캡션 양쪽에 같은 규칙을 적용해 매칭한다.
+_RE_ATOM_NO = re.compile(
+    r"(그림|표|figure|fig\.?|table)\s*\.?\s*([A-Za-z]?\d[\d.\-]*)", re.I)
+_ATOM_KIND = {"그림": "figure", "figure": "figure", "fig": "figure",
+              "표": "table", "table": "table"}
+
+
+def _atom_no(text, search: bool = False) -> tuple[str, str] | None:
+    # search=True: 캡션용 — 파스가 캡션 앞에 잡음을 붙이는 경우("15 그림 1.2.3 피팅강도")
+    # 가 있어 내부 탐색을 허용한다. 인용 target 은 정규화돼 있어 접두 매칭만 쓴다.
+    s = str(text or "").lstrip()
+    m = _RE_ATOM_NO.search(s) if search else _RE_ATOM_NO.match(s)
+    if not m:
+        return None
+    kind = _ATOM_KIND.get(m.group(1).lower().rstrip("."))
+    return (kind, m.group(2).rstrip(".")) if kind else None
+
+
+def _link_atom_citations(chunks: list[dict]) -> list[dict]:
+    """본문 인용("그림 1.2.1"/"표 1.2.4")을 원자 청크 ID로 해석해 심는다.
+
+    청커의 references 는 문자열 target 뿐이라 조회 시 캡션 매칭이 필요했다 —
+    여기서 문서 단위로 한 번 해석해 ``linked_figure_chunk_ids``/
+    ``linked_table_chunk_ids`` 에 chunk_id 를 직접 싣는다. 규칙부/지침부가 같은
+    그림 번호를 따로 가질 수 있어 색인 키에 document_type 세그먼트를 포함한다.
+    """
+    atom_ix: dict[tuple, str] = {}
+    for c in chunks:
+        ctype = c.get("chunk_type")
+        if ctype == "figure":
+            key = _atom_no(c.get("caption") or c.get("content"), search=True)
+        elif ctype == "table":
+            key = _atom_no(c.get("table_caption") or c.get("content"), search=True)
+        else:
+            continue
+        if key:
+            atom_ix.setdefault((c.get("document_type"), *key), c.get("chunk_id"))
+    if not atom_ix:
+        return chunks
+    for c in chunks:
+        if c.get("chunk_type") not in ("text", "article"):
+            continue
+        seg = c.get("document_type")
+        links: dict[str, list[str]] = {"figure": [], "table": []}
+        for r in c.get("references") or []:
+            key = _atom_no(r.get("target") if isinstance(r, dict) else r)
+            if not key:
+                continue
+            cid = atom_ix.get((seg, *key))
+            if cid:
+                links[key[0]].append(cid)
+        if links["figure"]:
+            c["linked_figure_chunk_ids"] = list(dict.fromkeys(links["figure"]))
+        if links["table"]:
+            c["linked_table_chunk_ids"] = list(dict.fromkeys(links["table"]))
+    return chunks
+
+
 def chunk_document(content_list, family: str = "auto", source_file: str | None = None):
     """content_list → (family, chunks). family='auto'면 detect_family로 판별."""
     items = _load(content_list)
@@ -112,7 +186,8 @@ def chunk_document(content_list, family: str = "auto", source_file: str | None =
     if source_file is None:
         source_file = ("content_list.json" if isinstance(content_list, list)
                        else Path(content_list).name)
-    return family, _strip_enrich(CHUNKERS[family](items, source_file).run())
+    return family, _link_atom_citations(
+        _promote_row_tables(_strip_enrich(CHUNKERS[family](items, source_file).run())))
 
 
 def write_jsonl(chunks: list[dict], out_path) -> Path:

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Chunk the sample_20 corpus (162 pre-ETL'd docs) through llmops_core.chunking.
+"""Chunk a pre-ETL'd corpus through llmops_core.chunking.
 
 Routes each content_list by its top-level society folder (reliable), runs the
 society-specific chunker via the package, and cross-checks that the package's
-content-based detect_family() agrees. Writes data_chunks/<society>/<doc>.jsonl.
+content-based detect_family() agrees. Writes <out>/<society>/<doc>.jsonl.
+
+    python scripts/chunk_corpus.py [--src data/etl] [--out data_chunks]
 """
 from __future__ import annotations
-import sys, time, traceback
+import argparse, sys, time, traceback
 from collections import Counter
 from pathlib import Path
 
@@ -32,7 +34,13 @@ FOLDER_FAMILY = PREFIX_FAMILY  # for the summary loop
 
 
 def main() -> int:
-    cls = sorted(p for p in SRC.rglob("*content_list.json")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--src", type=Path, default=SRC)
+    ap.add_argument("--out", type=Path, default=OUT)
+    args = ap.parse_args()
+    src, out_root = args.src.resolve(), args.out.resolve()
+
+    cls = sorted(p for p in src.rglob("*content_list.json")
                  if not p.name.endswith("v2.json"))
     # ClassNK: Rule_Package 합본 낱권이 단행본과 같은 문서면 스킵(이중 인제스트 방지)
     stems = {p.stem for p in cls}
@@ -52,7 +60,7 @@ def main() -> int:
     t0 = time.time()
 
     for cl in cls:
-        soc = cl.relative_to(SRC).parts[0].split("_")[0]  # ASCII prefix key
+        soc = cl.relative_to(src).parts[0].split("_")[0]  # ASCII prefix key
         family = PREFIX_FAMILY.get(soc)
         if not family:
             print(f"  ? unknown society folder: {soc}"); continue
@@ -64,7 +72,7 @@ def main() -> int:
             else:
                 agree += 1
             _, chunks = chunk_document(cl, family=family)
-            out = OUT / soc / f"{cl.stem.replace('_content_list','')}_chunks.jsonl"
+            out = out_root / soc / f"{cl.stem.replace('_content_list','')}_chunks.jsonl"
             write_jsonl(chunks, out)
             per_soc[soc] += 1
             per_soc_chunks[soc] += len(chunks)

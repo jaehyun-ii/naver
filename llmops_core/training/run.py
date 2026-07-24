@@ -25,7 +25,6 @@ from llmops_core.training.sft import (
     PeftSFTConfig,
     run_dpo_peft,
     run_grpo_peft,
-    run_ppo_peft,
     run_sft_peft,
 )
 
@@ -62,12 +61,35 @@ def _load_pref_rows(path: str) -> list[dict]:
     return rows
 
 
+def _load_prompt_rows(path: str) -> list[dict]:
+    """GRPO용 행 로드 — {prompt} | {text} | {messages:[{role:user}]} 혼용 허용.
+
+    prompt 외 컬럼(gold_label, evidence_quote, required_conditions, missing_fields 등)은
+    보존한다 — TRL GRPOTrainer가 reward function의 키워드 인자로 전달하므로 검증형
+    보상 계산에 쓰인다. prompt-only 데이터는 종전과 동일하게 동작한다.
+    """
+    rows: list[dict] = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        obj = json.loads(line)
+        p = obj.get("prompt") or obj.get("text")
+        if not p and obj.get("messages"):
+            p = next((m.get("content") for m in obj["messages"] if m.get("role") == "user"), None)
+        if p:
+            row = {k: v for k, v in obj.items() if k not in ("text", "messages")}
+            row["prompt"] = p
+            rows.append(row)
+    return rows
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="trl+peft LoRA/DoRA SFT·DPO")
-    p.add_argument("--method", choices=["sft", "dpo", "grpo", "ppo"], default="sft")
+    p.add_argument("--method", choices=["sft", "dpo", "grpo"], default="sft")
     p.add_argument("--train", required=True, help="학습 JSONL 경로")
     p.add_argument(
-        "--base-model", default="naver-hyperclovax/HyperCLOVAX-SEED-Text-Instruct-0.5B"
+        "--base-model", default="naver-hyperclovax/HyperCLOVAX-SEED-Think-14B"
     )
     p.add_argument("--output-dir", default="outputs/adapter")
     p.add_argument("--epochs", type=float, default=1.0)
@@ -76,6 +98,9 @@ def main() -> None:
     p.add_argument("--grad-accum", type=int, default=4)
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--lora-r", type=int, default=16)
+    p.add_argument("--lora-alpha", type=int, default=32)
+    p.add_argument("--beta", type=float, default=0.1, help="DPO 선호-KL β")
+    p.add_argument("--num-generations", type=int, default=4, help="GRPO 그룹 생성 수")
     p.add_argument("--max-seq-length", type=int, default=2048)
     p.add_argument("--dora", action="store_true", help="DoRA(weight-decomposed LoRA) 사용")
     p.add_argument("--qlora", action="store_true", help="QLoRA(4bit) — bitsandbytes 필요")
@@ -90,9 +115,13 @@ def main() -> None:
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         lora_r=args.lora_r,
+        lora_alpha=args.lora_alpha,
+        dpo_beta=args.beta,
         max_seq_length=args.max_seq_length,
         use_dora=args.dora,
         load_in_4bit=args.qlora,
+        # num_generations는 GRPO 전용 — SFTConfig/DPOConfig는 거부하므로 grpo에만 주입.
+        extra_sft_args={"num_generations": args.num_generations} if args.method == "grpo" else {},
     )
     pet = "DoRA" if args.dora else "LoRA"
     if args.method == "sft":
@@ -103,15 +132,11 @@ def main() -> None:
         rows = _load_pref_rows(args.train)
         print(f"[run] DPO/{pet} · {len(rows)}건 · base={args.base_model}", flush=True)
         out = run_dpo_peft(cfg, rows)
-    else:  # grpo/ppo — {prompt} 또는 {text}만 사용(보상 기반)
-        rows = _load_pref_rows(args.train) or _load_sft_rows(args.train)
-        prompts = [r.get("prompt") for r in rows if isinstance(r, dict) and r.get("prompt")]
-        if not prompts:  # sft 포맷이면 user 메시지를 프롬프트로
-            prompts = [m["content"] for r in rows for m in r.get("messages", [])
-                       if m.get("role") == "user"]
-        print(f"[run] {args.method.upper()}/{pet} · {len(prompts)}건 · base={args.base_model}",
+    else:  # grpo — 보상 기반({prompt}/{text}/{messages} 혼용, 메타 컬럼은 reward로 전달)
+        rows = _load_prompt_rows(args.train)
+        print(f"[run] {args.method.upper()}/{pet} · {len(rows)}건 · base={args.base_model}",
               flush=True)
-        out = run_grpo_peft(cfg, prompts) if args.method == "grpo" else run_ppo_peft(cfg, prompts)
+        out = run_grpo_peft(cfg, rows)
     print(f"[run] 어댑터 저장 완료 → {out}", flush=True)
 
 

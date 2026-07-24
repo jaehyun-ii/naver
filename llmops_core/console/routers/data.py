@@ -72,6 +72,7 @@ def build(body: BuildDatasetBody) -> DatasetManifest:
         num_val=len(val),
         num_test=len(test),
         s3_uri=_persist_dataset(fp, train, val, test),
+        samples=[e.model_dump() for e in train[:12]],  # 상세 미리보기용 대표 레코드
     )
     services().datasets.add(manifest)
     return manifest

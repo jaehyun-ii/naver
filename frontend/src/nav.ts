@@ -63,6 +63,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { path: "/hpo", label: "하이퍼파라미터 최적화", icon: TuneOutlined, implemented: true },
       { path: "/evalv", label: "성능 비교", icon: AssessmentOutlined, implemented: true },
       { path: "/bench", label: "벤치마크", icon: SpeedOutlined, implemented: true },
+      { path: "/aireg", label: "AIReg 벤치·학습", icon: ScienceOutlined, implemented: true },
       { path: "/prompt", label: "프롬프트 템플릿", icon: EditNoteOutlined, implemented: true },
     ],
   },

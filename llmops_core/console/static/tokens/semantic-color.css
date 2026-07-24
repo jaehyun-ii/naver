@@ -1,0 +1,67 @@
+/* Semantic Color Tokens — 실제 UI 적용 전용.
+ * 컴포넌트에서는 이 파일의 토큰을 우선 사용한다.
+ * color.css(Primitive Token)가 먼저 로드되어야 한다.
+ * 참조: docs/COLOR_GUIDELINE.md */
+:root {
+  /* Background */
+  --color-bg-base: var(--color-gray-0);
+  --color-bg-layer-1: var(--color-gray-5);
+  --color-bg-layer-2: var(--color-secondary-5);
+  --color-bg-inverse: var(--color-gray-90);
+
+  /* Text */
+  --color-text-title: var(--color-gray-90);
+  --color-text-body: var(--color-gray-90);
+  --color-text-subtle: var(--color-gray-70);
+  --color-text-muted: var(--color-gray-60);
+  --color-text-disabled: var(--color-gray-50);
+  --color-text-inverse: var(--color-gray-0);
+  --color-text-primary: var(--color-primary-50);
+
+  /* Border */
+  --color-border-default: var(--color-gray-40);
+  --color-border-strong: var(--color-gray-60);
+  --color-border-focus: var(--color-primary-50);
+  --color-border-disabled: var(--color-gray-30);
+
+  /* Button */
+  --button-primary-bg: var(--color-primary-50);
+  --button-primary-bg-hover: var(--color-primary-60);
+  --button-primary-bg-pressed: var(--color-primary-70);
+  --button-primary-text: var(--color-gray-0);
+
+  --button-secondary-bg: var(--color-secondary-50);
+  --button-secondary-bg-hover: var(--color-secondary-60);
+  --button-secondary-bg-pressed: var(--color-secondary-70);
+  --button-secondary-text: var(--color-gray-0);
+
+  --button-disabled-bg: var(--color-gray-20);
+  --button-disabled-text: var(--color-gray-50);
+
+  /* Input */
+  --input-bg: var(--color-gray-0);
+  --input-text: var(--color-gray-90);
+  --input-placeholder: var(--color-gray-60);
+  --input-border: var(--color-gray-60);
+  --input-border-focus: var(--color-primary-50);
+  --input-border-error: var(--color-danger-50);
+  --input-disabled-bg: var(--color-gray-10);
+  --input-disabled-text: var(--color-gray-50);
+
+  /* Status */
+  --color-danger: var(--color-danger-50);
+  --color-danger-bg: var(--color-danger-5);
+  --color-danger-border: var(--color-danger-20);
+
+  --color-warning: var(--color-warning-50);
+  --color-warning-bg: var(--color-warning-5);
+  --color-warning-border: var(--color-warning-20);
+
+  --color-success: var(--color-success-50);
+  --color-success-bg: var(--color-success-5);
+  --color-success-border: var(--color-success-20);
+
+  --color-info: var(--color-information-50);
+  --color-info-bg: var(--color-information-5);
+  --color-info-border: var(--color-information-20);
+}

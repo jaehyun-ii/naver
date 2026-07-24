@@ -1,11 +1,17 @@
 import { useState } from "react";
+import { Link as RouterLink } from "react-router-dom";
 import {
-  Alert, Box, Card, CardContent, Chip, Stack, Table, TableBody,
+  Alert, Box, Button, Card, CardContent, Chip, Stack, Table, TableBody,
   TableCell, TableHead, TableRow, Typography, IconButton, Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import CloudQueueOutlined from "@mui/icons-material/CloudQueueOutlined";
+import ScienceOutlined from "@mui/icons-material/ScienceOutlined";
+import Inventory2Outlined from "@mui/icons-material/Inventory2Outlined";
+import LayersOutlined from "@mui/icons-material/LayersOutlined";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { SummaryTiles } from "../components/SummaryTiles";
 import { useApi } from "../hooks/useApi";
 
 interface Experiment {
@@ -183,6 +189,7 @@ function ModelsPanel() {
                 <TableCell>이름</TableCell>
                 <TableCell>최신 버전</TableCell>
                 <TableCell>별칭</TableCell>
+                <TableCell align="right">액션</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -216,6 +223,9 @@ function ModelsPanel() {
                       )}
                     </Stack>
                   </TableCell>
+                  <TableCell align="right">
+                    <Button size="small" component={RouterLink} to="/serving" startIcon={<CloudQueueOutlined />}>서빙</Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -228,9 +238,12 @@ function ModelsPanel() {
 
 export default function Tracking() {
   const { data, loading, error, reload } = useApi<ExperimentsResp>("/api/tracking/experiments");
+  const modelsApi = useApi<ModelsResp>("/api/tracking/models");
   const [selected, setSelected] = useState<Experiment | null>(null);
 
   const experiments = data?.experiments ?? [];
+  const regModels = modelsApi.data?.models ?? [];
+  const modelVersions = regModels.reduce((a, m) => a + m.versions.length, 0);
 
   return (
     <>
@@ -243,6 +256,14 @@ export default function Tracking() {
           </Tooltip>
         }
       />
+
+      {(data || modelsApi.data) && (
+        <SummaryTiles stats={[
+          { label: "실험", value: experiments.length, hint: "MLflow", icon: ScienceOutlined },
+          { label: "등록 모델", value: regModels.length, hint: "레지스트리", icon: Inventory2Outlined, accent: "success.main" },
+          { label: "모델 버전", value: modelVersions, hint: "누적", icon: LayersOutlined },
+        ]} />
+      )}
 
       {data?.tracking_uri && (
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 2 }}>

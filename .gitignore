@@ -36,3 +36,16 @@ docs/
 
 # VPN 인증서(절대 커밋 금지)
 *.ovpn
+
+# 선급문서 원본(대용량, repo에 두지 않음)
+/sample_20/
+/sample_20.zip
+
+# 청킹결과(대용량 산출물)
+/data_chunks/
+/viewer/data/
+
+# 대용량 데이터 산출물(레포 제외)
+/data_aireg/
+/data_chunks_full/
+/rag_parents.db

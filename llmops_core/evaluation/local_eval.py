@@ -40,9 +40,9 @@ def _load_model(base: str, adapter: str | None):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    tok = AutoTokenizer.from_pretrained(adapter or base)
+    tok = AutoTokenizer.from_pretrained(adapter or base, trust_remote_code=False)
     model = AutoModelForCausalLM.from_pretrained(
-        base, torch_dtype=torch.bfloat16, device_map=device
+        base, torch_dtype=torch.bfloat16, device_map=device, trust_remote_code=False
     )
     if adapter:
         from peft import PeftModel
@@ -50,6 +50,15 @@ def _load_model(base: str, adapter: str | None):
         model = PeftModel.from_pretrained(model, adapter)
     model.eval()
     return model, tok, device
+
+
+def _ct(tok, messages, **kw):
+    """chat template 적용 — hyperclovax(SEED-Think) 등 추론모델은 비추론(skip_reasoning)으로
+    직답하게 해 짧은 정답과 채점 정합. 해당 kwarg 미지원 토크나이저는 일반 템플릿으로 폴백."""
+    try:
+        return tok.apply_chat_template(messages, skip_reasoning=True, **kw)
+    except TypeError:
+        return tok.apply_chat_template(messages, **kw)
 
 
 def _messages(question: str, system: str | None) -> list[dict]:
@@ -66,8 +75,8 @@ def _seq_logprob(model, tok, device, prompt: str, completion: str,
     """prompt에 이어진 completion 토큰들의 평균 로그확률(선호 비교용)."""
     import torch
 
-    p_ids = tok.apply_chat_template(
-        _messages(prompt, system),
+    p_ids = _ct(
+        tok, _messages(prompt, system),
         add_generation_prompt=True, return_tensors="pt",
     ).to(device)
     c_ids = tok(completion, return_tensors="pt", add_special_tokens=False)["input_ids"].to(device)
@@ -106,15 +115,15 @@ def _generate(model, tok, device, question: str, max_new_tokens: int = 128,
               system: str | None = None) -> str:
     import torch
 
-    enc = tok.apply_chat_template(
-        _messages(question, system),
+    enc = _ct(
+        tok, _messages(question, system),
         add_generation_prompt=True, return_tensors="pt", return_dict=True,
     ).to(device)
     prompt_len = enc["input_ids"].shape[-1]
     with torch.no_grad():
         out = model.generate(
             **enc, max_new_tokens=max_new_tokens, do_sample=False,
-            pad_token_id=tok.eos_token_id,
+            pad_token_id=tok.eos_token_id, tokenizer=tok,  # stop_strings(generation_config) 해석에 필요
         )
     return tok.decode(out[0][prompt_len:], skip_special_tokens=True)
 

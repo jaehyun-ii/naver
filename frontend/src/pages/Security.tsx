@@ -6,8 +6,13 @@ import {
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import SecurityOutlined from "@mui/icons-material/SecurityOutlined";
+import VpnKeyOutlined from "@mui/icons-material/VpnKeyOutlined";
+import HistoryOutlined from "@mui/icons-material/HistoryOutlined";
+import CheckOutlined from "@mui/icons-material/Check";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { SummaryTiles } from "../components/SummaryTiles";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -338,6 +343,10 @@ function AuditPanel() {
 export default function Security() {
   const [tab, setTab] = useState(0);
   const [nonce, setNonce] = useState(0);
+  const rolesT = useApi<RolesResponse>("/api/auth/roles", [nonce]);
+  const tokensT = useApi<IssuedToken[]>("/api/auth/tokens", [nonce]);
+  const auditT = useApi<AuditEntry[]>("/api/audit", [nonce]);
+  const permsT = useApi<{ permissions: Record<string, string[]> }>("/api/auth/permissions", [nonce]);
 
   return (
     <>
@@ -351,12 +360,61 @@ export default function Security() {
         }
       />
 
+      {(rolesT.data || tokensT.data || auditT.data) && (
+        <SummaryTiles stats={[
+          { label: "역할", value: rolesT.data?.roles?.length ?? 0, hint: "RBAC 정의", icon: SecurityOutlined },
+          { label: "발급 토큰", value: tokensT.data?.length ?? 0, hint: "활성", icon: VpnKeyOutlined, accent: "success.main" },
+          { label: "감사 로그", value: auditT.data?.length ?? 0, hint: "기록된 이벤트", icon: HistoryOutlined },
+        ]} />
+      )}
+
       <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
         <Tabs value={tab} onChange={(_, v: number) => setTab(v)}>
           <Tab label="RBAC" />
           <Tab label="감사 로그" />
         </Tabs>
       </Box>
+
+      {tab === 0 && permsT.data && (() => {
+        const perms = permsT.data.permissions;
+        const roles = Object.keys(perms);
+        const allPerms = Array.from(new Set(Object.values(perms).flat().filter((p) => p !== "*"))).sort();
+        const has = (role: string, p: string) => perms[role]?.includes("*") || perms[role]?.includes(p);
+        return (
+          <Card variant="outlined" sx={{ borderRadius: 3, mb: 3 }}>
+            <CardContent>
+              <Typography variant="h3" gutterBottom>역할 × 권한 매트릭스</Typography>
+              <Box sx={{ overflowX: "auto" }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>권한</TableCell>
+                      {roles.map((r) => <TableCell key={r} align="center">{r}</TableCell>)}
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {allPerms.map((p) => (
+                      <TableRow key={p} hover>
+                        <TableCell sx={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{p}</TableCell>
+                        {roles.map((r) => (
+                          <TableCell key={r} align="center">
+                            {has(r, p)
+                              ? <CheckOutlined fontSize="small" sx={{ color: "success.main" }} />
+                              : <Typography component="span" variant="caption" color="text.disabled">·</Typography>}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Box>
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+                admin은 전체(<code>*</code>) 권한을 보유합니다.
+              </Typography>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {tab === 0 ? <RbacPanel key={`rbac-${nonce}`} /> : <AuditPanel key={`audit-${nonce}`} />}
     </>

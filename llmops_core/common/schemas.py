@@ -139,6 +139,7 @@ class DatasetManifest(BaseModel):
     num_val: int = 0
     num_test: int = 0
     s3_uri: str | None = None
+    samples: list[dict] = Field(default_factory=list)  # 대표 레코드 미리보기(콘솔 상세용)
 
 
 # ── 배포 거버넌스 (Release Gateway, L5→L6) ──

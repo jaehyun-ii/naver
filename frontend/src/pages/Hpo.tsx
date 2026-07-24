@@ -3,9 +3,16 @@ import {
   Alert, Box, Button, Card, CardContent, Chip, Divider, Stack, Table, TableBody,
   TableCell, TableHead, TableRow, TextField, Typography, IconButton, Tooltip,
 } from "@mui/material";
+import { Link as RouterLink } from "react-router-dom";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import TuneOutlined from "@mui/icons-material/TuneOutlined";
+import CheckCircleOutline from "@mui/icons-material/CheckCircleOutline";
+import EmojiEventsOutlined from "@mui/icons-material/EmojiEventsOutlined";
+import AccountTreeOutlined from "@mui/icons-material/AccountTreeOutlined";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { SummaryTiles } from "../components/SummaryTiles";
+import { ScatterPlot } from "../components/Charts";
 import { useApi } from "../hooks/useApi";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { api, ApiError } from "../api";
@@ -28,10 +35,10 @@ interface HpoStudy {
   error?: string;
 }
 
-const SAMPLE_LABELED = `{"text": "환불 정책?", "response": "14일 이내 전액 환불"}
-{"text": "배송 기간?", "response": "평일 2~3일"}`;
+const SAMPLE_LABELED = `{"text": "정기검사 주기?", "response": "5년 주기로 선체·기관·의장을 종합 확인"}
+{"text": "연차검사 시기?", "response": "매년, 기준일 전후 3개월 검사창 내"}`;
 
-const SAMPLE_EVAL = `{"question": "환불 정책?", "expected": "14일 이내 전액 환불"}`;
+const SAMPLE_EVAL = `{"question": "정기검사 주기?", "expected": "5년 주기"}`;
 
 function toApiError(e: unknown): string {
   return e instanceof ApiError ? `${e.message} (HTTP ${e.status})` : (e as Error).message;
@@ -217,7 +224,26 @@ function StudyDetail({ hpoId }: { hpoId: string }) {
             {study.trials.length === 0 ? (
               <EmptyView message="아직 완료된 trial 이 없습니다." />
             ) : (
-              <Table size="small">
+              <>
+                {study.trials.length > 1 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>trial 점수 분포</Typography>
+                    <ScatterPlot
+                      points={study.trials.map((t) => ({
+                        x: t.trial, y: t.score,
+                        best: study.best_value !== null && study.best_value === t.score,
+                        tooltip: [
+                          `trial ${t.trial} · score ${t.score.toFixed(4)}`,
+                          `lr ${t.params?.learning_rate ?? "—"}`,
+                          `lora_r ${t.params?.lora_r ?? "—"} · alpha ${t.params?.lora_alpha ?? "—"}`,
+                        ],
+                      }))}
+                      xlabel="trial" ylabel="score"
+                      fmtX={(v) => String(Math.round(v))} fmtY={(v) => v.toFixed(3)}
+                    />
+                  </Box>
+                )}
+                <Table size="small">
                 <TableHead>
                   <TableRow>
                     <TableCell>trial</TableCell>
@@ -244,7 +270,8 @@ function StudyDetail({ hpoId }: { hpoId: string }) {
                     );
                   })}
                 </TableBody>
-              </Table>
+                </Table>
+              </>
             )}
           </>
         )}
@@ -268,11 +295,24 @@ export default function Hpo() {
         title="파라미터 최적화 (HPO)"
         subtitle="Optuna 기반 하이퍼파라미터 탐색 스터디 실행·조회"
         action={
-          <Tooltip title="새로고침">
-            <IconButton onClick={() => reload()} aria-label="새로고침"><RefreshIcon /></IconButton>
-          </Tooltip>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Button variant="outlined" size="small" component={RouterLink} to="/pipe" startIcon={<AccountTreeOutlined />}>
+              파이프라인에서 사용
+            </Button>
+            <Tooltip title="새로고침">
+              <IconButton onClick={() => reload()} aria-label="새로고침"><RefreshIcon /></IconButton>
+            </Tooltip>
+          </Stack>
         }
       />
+
+      {(data?.length ?? 0) > 0 && (
+        <SummaryTiles stats={[
+          { label: "스터디", value: data!.length, hint: "HPO 탐색", icon: TuneOutlined },
+          { label: "완료", value: data!.filter((s) => s.status === "succeeded").length, icon: CheckCircleOutline, accent: "success.main" },
+          { label: "최고 score", value: (() => { const v = data!.map((s) => s.best_value).filter((x): x is number => x != null); return v.length ? Math.max(...v).toFixed(3) : "—"; })(), hint: "reference F1", icon: EmojiEventsOutlined },
+        ]} />
+      )}
 
       <LaunchForm onStarted={onStarted} />
 

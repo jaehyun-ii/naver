@@ -31,8 +31,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import unicodedata
 from pathlib import Path
 
+from ._hierarchy import interleave_children, merge_figure_fragments
 from ._tables import row_retrieval, table_rows
 
 
@@ -56,7 +58,11 @@ RE_SUBITEM2 = re.compile(r"^\((i|ii|iii|iv|v|vi|vii|viii|ix|x|[a-z])\)\s*\S")
 
 # noise: dot-leaders / trailing page numbers (table-of-contents), 개정 block
 RE_LEADER = re.compile(r"·{2,}|…|\.{4,}")
-RE_AMEND = re.compile(r"^\s*[\-–—]\s|^적용일자|^개정사항|^차\s*례$|^【")
+# 개정 블록의 대시줄("- 901.의 6항 (4)호를 개정함.")만 거른다 — 본문 불릿
+# ("- 광석운반선" 등)은 보존해야 하므로 대시 전체를 노이즈로 보면 안 된다.
+RE_AMEND = re.compile(
+    r"^\s*\\?[\-–—][^\n]{0,80}(?:개정|추가|삭제|신설|변경)함\.?\s*$"
+    r"|^적용일자|^개정사항|^차\s*례$|^【")
 
 REF_MARKER_GUIDE = "【지침 참조】"
 REF_MARKER_RULE = "【규칙 참조】"
@@ -192,7 +198,8 @@ class Chunker:
         # (chap, sec, art) -> parent chunk_id, per segment, for cross-linking
         self.article_index: dict[str, dict[tuple, str]] = {"rule": {}, "guidance": {}}
         self._seen_ids: set[str] = set()
-        stem = re.sub(r"_content_list$", "", Path(source_file).stem)
+        # macOS zip 산출물은 파일명이 NFD(자모 분해) — NFC 정규화 없이는 가-힣에 안 잡혀 슬러그에서 한글이 전부 소실된다.
+        stem = unicodedata.normalize("NFC", re.sub(r"_content_list$", "", Path(source_file).stem))
         self.part_no, self.part_title = detect_part(items)
         if self.part_no == "1":                     # 편 번호 미검출 시 파일명에서 보강
             fm = re.match(r"^(\d+)편", stem)
@@ -314,10 +321,10 @@ class Chunker:
             page = x.get("page_idx")
             if typ in ("header", "footer", "page_number", "page_footnote"):
                 continue
-            if typ == "table":
-                st["tables"].append(x); continue
+            if typ == "table":                      # (원자, 앵커) — 원문 위치 인터리브용
+                st["tables"].append((x, len(st["pieces"]))); continue
             if typ == "image":
-                st["figures"].append(x); continue
+                st["figures"].append((x, len(st["pieces"]))); continue
             if typ == "equation":
                 eq = (x.get("text") or "").strip()
                 if eq:
@@ -388,7 +395,7 @@ class Chunker:
         appx_lo = guide_body if guide_body is not None else (rule_body or 0)
         for i in range(appx_lo, len(self.items)):
             x = self.items[i]
-            if (x.get("type") == "text" and x.get("text_level") == 2
+            if (x.get("type") == "text" and x.get("text_level") in (1, 2)
                     and RE_APPENDIX.match((x.get("text") or "").strip())):
                 appx_anchor = i
                 break
@@ -458,14 +465,17 @@ class Chunker:
     def _first_article(self, lo: int, hi: int) -> int | None:
         for i in range(lo, hi):
             x = self.items[i]
-            if x.get("type") != "text" or x.get("text_level") != 2:
+            # 조 헤딩 레벨: pipeline 백엔드는 2, vlm 백엔드는 1을 부여 — 둘 다 허용.
+            # (None 제외는 유지 — 본문 속 "N." 시작 문장의 조 오인 방지)
+            if x.get("type") != "text" or x.get("text_level") not in (1, 2):
                 continue
             t = (x.get("text") or "").strip()
             if is_noise(t):
                 continue
             if RE_ARTICLE.match(t):
                 # rewind to the nearest clean 장 heading so context is captured
-                for j in range(i, max(lo, i - 12), -1):
+                # (하한 lo 포함 — 발췌본은 장 헤딩이 세그먼트 첫 아이템인 경우가 흔하다)
+                for j in range(i, max(lo, i - 12) - 1, -1):
                     tj = (self.items[j].get("text") or "").strip()
                     if RE_CHAPTER.match(tj) and not is_noise(tj):
                         return j
@@ -493,11 +503,11 @@ class Chunker:
             if typ in ("header", "footer", "page_number", "page_footnote"):
                 continue
 
-            if typ == "table":
-                st["tables"].append(x)
+            if typ == "table":                      # (원자, 앵커=지금까지의 piece 수 → 원문 위치)
+                st["tables"].append((x, len(st["pieces"])))
                 continue
             if typ == "image":
-                st["figures"].append(x)
+                st["figures"].append((x, len(st["pieces"])))
                 continue
             if typ == "equation":
                 eq = (x.get("text") or "").strip()
@@ -526,7 +536,7 @@ class Chunker:
 
             # appendix heading
             m = RE_APPENDIX.match(raw)
-            if seg == "appendix" and m and lvl == 2:
+            if seg == "appendix" and m and lvl in (1, 2):
                 flush()
                 st["chap"] = (m.group(1), m.group(2).strip())
                 st["sec"], st["art"] = (None, ""), (None, "")
@@ -549,7 +559,7 @@ class Chunker:
             # MinerU가 text_level을 안 매기는 경우가 잦아 레벨 무관 검출)
             m = RE_ARTICLE.match(raw)
             has_ref = bool(m) and (REF_MARKER_GUIDE in raw or REF_MARKER_RULE in raw)
-            if m and (lvl == 2 or has_ref):
+            if m and (lvl in (1, 2) or has_ref):
                 flush()
                 title = m.group(2)
                 if REF_MARKER_GUIDE in title or REF_MARKER_RULE in title:
@@ -570,7 +580,8 @@ class Chunker:
         chap_no, chap_title = st["chap"]
         sec_no, sec_title = st["sec"]
         art_no, art_title = st["art"]
-        pieces, tables, figures = st["pieces"], st["tables"], st["figures"]
+        pieces, tables = st["pieces"], st["tables"]
+        figures = merge_figure_fragments(st["figures"])   # 조각난 복합 그림 병합
         if not (pieces or tables or figures):
             return
 
@@ -589,8 +600,8 @@ class Chunker:
             path.append(f"{art_no}. {art_title}")
 
         pages = sorted({p for pc in pieces for p in pc["pages"]}
-                       | {t.get("page_idx") for t in tables}
-                       | {f.get("page_idx") for f in figures})
+                       | {t.get("page_idx") for t, _ in tables}
+                       | {f.get("page_idx") for f, _ in figures})
 
         def meta(**extra) -> dict:
             base = {
@@ -620,6 +631,7 @@ class Chunker:
             child_ids.append(cid)
             ctype = "text"
             rec = meta(
+                pages=sorted(unit["pages"]) if unit.get("pages") else pages,  # 유닛 실제 페이지(아티클 span 아님)
                 chunk_id=cid, parent_chunk_id=parent_id,
                 chunk_level="child", chunk_type=ctype,
                 local_heading=unit.get("heading", ""),
@@ -646,8 +658,9 @@ class Chunker:
             b["previous_chunk_id"] = a["chunk_id"]
 
         # -- tables (표 전체 + 행 단위, 전략 Rule 5) --------------------------
-        table_chunks = []
-        for k, tb in enumerate(tables, 1):
+        atom_groups = []                      # (앵커, [원자(+행)들]) — 원문 위치 인터리브용
+        for k, (tb, anchor) in enumerate(tables, 1):
+            table_chunks = []
             tid = f"{parent_id}_T{k:03d}"
             table_ids.append(tid)
             cap = " ".join(tb.get("table_caption") or [])
@@ -688,26 +701,28 @@ class Chunker:
                         references=atom_refs(rtext, cap),
                         summary="", linked_article_id=parent_id, linked_table_id=tid,
                     ))
+            atom_groups.append((anchor, table_chunks))
 
         # -- figures ---------------------------------------------------------
-        figure_chunks = []
-        for k, fg in enumerate(figures, 1):
+        for k, (fg, anchor) in enumerate(figures, 1):
             fid = f"{parent_id}_F{k:03d}"
             figure_ids.append(fid)
             cap = " ".join(fg.get("image_caption") or [])
             vis = (fg.get("content") or "").strip()   # ETL 이미지 분석(설명/OCR — MinerU image-analysis)
-            figure_chunks.append(meta(
+            atom_groups.append((anchor, [meta(
                 pages=[fg["page_idx"]] if fg.get("page_idx") is not None else pages,
                 chunk_id=fid, parent_chunk_id=parent_id,
                 chunk_level="child", chunk_type="figure",
                 caption=cap,
                 image_path=fg.get("img_path", ""),
-                ocr_text="", visual_summary="",
+                image_paths=fg.get("img_paths") or ([fg["img_path"]] if fg.get("img_path") else []),
+                visual_summary=vis,
+                image_kind=fg.get("sub_type") or "",   # text_image(OCR)/natural_image/flowchart(mermaid)/seal/chemical
                 content=cap,
                 retrieval_text=" ".join(t for t in (cap, art_title, vis) if t),
                 references=atom_refs(" ".join((cap, vis)), cap),
                 linked_article_id=parent_id,
-            ))
+            )]))
 
         parent = meta(
             chunk_id=parent_id, parent_chunk_id=None,
@@ -722,9 +737,10 @@ class Chunker:
             linked_rule_chunk_id=None, linked_guidance_chunk_id=None,
         )
         self.out.append(parent)
-        self.out.extend(child_chunks)
-        self.out.extend(table_chunks)
-        self.out.extend(figure_chunks)
+        # 텍스트 자식과 그림·표 원자를 원문 등장 위치대로 병합 방출(ID 체계는 종류별 유지)
+        self.out.extend(interleave_children(
+            [(u.get("src_idx", 0), c) for u, c in zip(child_units, child_chunks)],
+            atom_groups))
 
     # -- split article body into child 의미 단위 -----------------------------
     @staticmethod
@@ -737,7 +753,7 @@ class Chunker:
         para_no, para_title = "", ""
         cur_item = cur_sub = ""                                # 현재 호·목 번호(하위 상속)
 
-        for pc in pieces:
+        for pi, pc in enumerate(pieces):
             # 블록 내부의 목/세목·호도 잡도록 줄 단위로 처리한다.
             # 호"(n)"·목"(가)"·세목"(a)"는 모호하지 않아 모든 줄에서 분리하되,
             # 항"n."은 **블록 첫 줄에서만** 인정한다(비고의 "1." "2." 오분류 방지).
@@ -758,31 +774,37 @@ class Chunker:
                     para_title = re.sub(r"^\d{1,2}(?:-\d{1,2})?\.\s*", "", t).strip()[:60]
                     cur_item = cur_sub = ""
                     cur = {"text": t, "heading": para_title, "para_no": para_no,
-                           "para_title": para_title, "item_no": "", "sub_item_no": ""}
+                           "para_title": para_title, "item_no": "", "sub_item_no": "",
+                           "pages": set(pc["pages"]), "src_idx": pi}
                 elif m_ho:                                    # 새 호 → 개별 유닛
                     if cur:
                         units.append(cur)
                     cur_item, cur_sub = m_ho.group(1), ""
                     cur = {"text": t, "heading": para_title, "para_no": para_no,
-                           "para_title": para_title, "item_no": cur_item, "sub_item_no": ""}
+                           "para_title": para_title, "item_no": cur_item, "sub_item_no": "",
+                           "pages": set(pc["pages"]), "src_idx": pi}
                 elif m_mok:                                   # 새 목 → 개별 유닛
                     if cur:
                         units.append(cur)
                     cur_sub = m_mok.group(1)
                     cur = {"text": t, "heading": para_title, "para_no": para_no,
-                           "para_title": para_title, "item_no": cur_item, "sub_item_no": cur_sub}
+                           "para_title": para_title, "item_no": cur_item, "sub_item_no": cur_sub,
+                           "pages": set(pc["pages"]), "src_idx": pi}
                 elif m_semok:                                 # 새 세목 → 개별 유닛
                     if cur:
                         units.append(cur)
                     sino = f"{cur_sub}.{m_semok.group(1)}" if cur_sub else m_semok.group(1)
                     cur = {"text": t, "heading": para_title, "para_no": para_no,
-                           "para_title": para_title, "item_no": cur_item, "sub_item_no": sino}
+                           "para_title": para_title, "item_no": cur_item, "sub_item_no": sino,
+                           "pages": set(pc["pages"]), "src_idx": pi}
                 else:                                         # 대시/비고/이어지는 본문
                     if cur is None:
                         cur = {"text": t, "heading": "", "para_no": para_no,
-                               "para_title": para_title, "item_no": "", "sub_item_no": ""}
+                               "para_title": para_title, "item_no": "", "sub_item_no": "",
+                               "pages": set(pc["pages"]), "src_idx": pi}
                     else:
                         cur["text"] += "\n" + t
+                        cur["pages"] |= pc["pages"]
         if cur:
             units.append(cur)
         return units or [{"text": art_title, "heading": "", "para_no": "",

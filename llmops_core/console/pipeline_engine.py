@@ -98,23 +98,92 @@ def _executor(svc=None):
     return RealExecutor()
 
 _SAMPLE_RECORDS = [
-    {"id": "1", "text": "환불 정책은 구매 후 14일 이내 전액 환불입니다."},
-    {"id": "2", "text": "배송은 평일 기준 2~3영업일 소요됩니다."},
-    {"id": "3", "text": "교환은 미사용 상품에 한해 7일 이내 가능합니다."},
+    {"id": "1", "text": "선급증서(Classification Certificate)는 선박이 선급규칙에 적합함을 증명하며, "
+     "정기검사 주기에 맞춰 유효성을 유지한다."},
+    {"id": "2", "text": "정기검사(Special Survey)는 5년 주기로 시행하며, 선체·기관·의장의 상태를 "
+     "종합적으로 확인한다."},
+    {"id": "3", "text": "중간검사(Intermediate Survey)는 정기검사 사이에 시행하여 주요 부재의 "
+     "부식·손상 여부를 점검한다."},
+    {"id": "4", "text": "연차검사(Annual Survey)는 매년 시행하며 선급증서 유지에 필요한 최소 요건을 "
+     "확인한다."},
+    {"id": "5", "text": "선급유지(Class Maintenance)를 위해서는 검사 지적사항(Condition of Class)을 "
+     "지정 기한 내에 시정해야 한다."},
+    {"id": "6", "text": "입거검사(Docking Survey)는 선저 외판·타·프로펠러 등 수선하부 구조를 "
+     "확인하기 위해 시행한다."},
+    {"id": "7", "text": "재료 및 의장품은 선급 승인된 제조법과 시험성적서(Mill Sheet)를 갖춘 것만 "
+     "사용할 수 있다."},
+    {"id": "8", "text": "형식승인(Type Approval)을 받은 기자재는 개별 검사를 일부 면제받을 수 있다."},
+    {"id": "9", "text": "사이버복원력(Cyber Resilience) 요건에 따라 선박의 OT/IT 시스템은 위험도 "
+     "평가와 방어 조치를 문서화해야 한다."},
+    {"id": "10", "text": "자율운항선박(MASS)은 원격제어·자율기능의 안전성을 입증하기 위한 "
+     "위험도 기반 평가(Risk-based Assessment)를 거친다."},
+    {"id": "11", "text": "용접부는 승인된 용접절차서(WPS)와 자격을 갖춘 용접사에 의해 시공되어야 한다."},
+    {"id": "12", "text": "비파괴검사(NDT)는 방사선(RT)·초음파(UT) 등으로 용접부 내부 결함을 확인한다."},
 ]
 _SAMPLE_LABELED = [
-    {"text": "환불 정책이 어떻게 되나요?", "response": "구매 후 14일 이내 전액 환불됩니다."},
-    {"text": "배송 기간은 얼마나 걸리나요?", "response": "평일 기준 2~3일 소요됩니다."},
-    {"text": "교환 가능 기간은?", "response": "미사용 상품은 7일 이내 교환 가능합니다."},
+    {"text": "선급증서 유효기간이 지나면 어떻게 되나요?",
+     "response": "선급이 정지될 수 있으므로 즉시 선급기관에 재검사를 신청해 증서를 갱신해야 합니다."},
+    {"text": "정기검사(Special Survey)는 몇 년 주기인가요?",
+     "response": "정기검사는 5년 주기로 시행하며, 선체·기관·의장 상태를 종합 확인합니다."},
+    {"text": "중간검사의 목적은 무엇인가요?",
+     "response": "정기검사 사이에 주요 부재의 부식·손상 여부를 점검해 선급 상태를 유지하기 위함입니다."},
+    {"text": "연차검사는 언제 받아야 하나요?",
+     "response": "매년 시행하며, 검사 기준일 전후 3개월의 검사창(window) 내에 받아야 합니다."},
+    {"text": "Condition of Class(검사 지적사항)는 어떻게 처리하나요?",
+     "response": "지정된 기한 내에 시정하고 검사원의 확인을 받아야 선급이 유지됩니다."},
+    {"text": "입거검사에서는 무엇을 확인하나요?",
+     "response": "선저 외판, 타, 프로펠러 등 수선하부 구조의 상태와 부식·손상을 확인합니다."},
+    {"text": "선박에 사용하는 재료는 어떤 조건을 만족해야 하나요?",
+     "response": "선급 승인된 제조법으로 제작되고 시험성적서(Mill Sheet)를 갖춘 재료여야 합니다."},
+    {"text": "형식승인(Type Approval)의 이점은 무엇인가요?",
+     "response": "형식승인 기자재는 반복되는 개별 검사를 일부 면제받아 검사 부담을 줄일 수 있습니다."},
+    {"text": "선박 사이버복원력 요건은 무엇을 요구하나요?",
+     "response": "OT/IT 시스템에 대한 위험도 평가와 방어·복구 조치를 수립하고 문서화하도록 요구합니다."},
+    {"text": "자율운항선박은 어떤 절차로 승인받나요?",
+     "response": "원격제어·자율기능의 안전성을 위험도 기반 평가로 입증하고 선급 검토를 거쳐 승인받습니다."},
+    {"text": "용접 작업의 기본 요건은 무엇인가요?",
+     "response": "승인된 용접절차서(WPS)를 따르고 자격을 보유한 용접사가 시공해야 합니다."},
+    {"text": "용접부 결함은 어떻게 검사하나요?",
+     "response": "방사선(RT)·초음파(UT) 등 비파괴검사(NDT)로 내부 결함 유무를 확인합니다."},
 ]
 _SAMPLE_METRICS = {"faithfulness": 0.9, "context_precision": 0.82}
 _SAMPLE_PREFERENCE = [
-    {"prompt": "선급증서 유효기간이 지나면?", "chosen": "즉시 선급기관에 재검사를 신청해 갱신합니다.",
+    {"prompt": "선급증서 유효기간이 지나면?",
+     "chosen": "선급이 정지될 수 있으므로 즉시 선급기관에 재검사를 신청해 증서를 갱신합니다.",
      "rejected": "그냥 둬도 됩니다."},
-    {"prompt": "FAT 불합격 시 절차는?", "chosen": "부적합 항목을 시정조치 요구서로 발행하고 재시험합니다.",
+    {"prompt": "FAT(공장수락시험) 불합격 시 절차는?",
+     "chosen": "부적합 항목을 시정조치 요구서로 발행하고 원인 시정 후 재시험을 실시합니다.",
      "rejected": "무시하고 출하합니다."},
-    {"prompt": "재료증명서가 없으면?", "chosen": "공급사에 제출을 요구하고 미제출 시 입고를 보류합니다.",
-     "rejected": "없어도 됩니다."},
+    {"prompt": "재료증명서(Mill Sheet)가 없으면?",
+     "chosen": "공급사에 제출을 요구하고 미제출 시 해당 재료의 입고를 보류합니다.",
+     "rejected": "없어도 그냥 사용합니다."},
+    {"prompt": "정기검사(Special Survey) 주기는?",
+     "chosen": "5년 주기로 시행하며 선체·기관·의장 상태를 종합적으로 확인합니다.",
+     "rejected": "필요할 때만 아무 때나 받으면 됩니다."},
+    {"prompt": "연차검사를 받지 않으면?",
+     "chosen": "선급증서의 배서(endorsement)를 받지 못해 선급이 정지될 수 있습니다.",
+     "rejected": "연차검사는 안 받아도 아무 문제 없습니다."},
+    {"prompt": "Condition of Class(검사 지적사항)를 방치하면?",
+     "chosen": "지정 기한을 넘기면 선급이 정지될 수 있으므로 기한 내에 시정하고 확인받아야 합니다.",
+     "rejected": "지적사항은 시간이 지나면 자동으로 사라집니다."},
+    {"prompt": "입거검사(Docking Survey)를 생략할 수 있나요?",
+     "chosen": "수중검사(UWILD) 등 선급이 인정한 대체 방법 요건을 충족할 때만 대체가 가능합니다.",
+     "rejected": "선주가 원하면 언제든 생략할 수 있습니다."},
+    {"prompt": "선급 미승인 기자재를 설치하려면?",
+     "chosen": "선급의 승인 또는 형식승인을 받은 후 검사원의 확인을 거쳐 설치해야 합니다.",
+     "rejected": "승인 없이 먼저 설치하고 나중에 알리면 됩니다."},
+    {"prompt": "용접사 자격 없이 주요 구조를 용접하려면?",
+     "chosen": "승인된 용접절차서와 유자격 용접사가 필요하므로 무자격 용접은 허용되지 않습니다.",
+     "rejected": "급하면 자격 없는 사람이 용접해도 됩니다."},
+    {"prompt": "비파괴검사에서 균열이 발견되면?",
+     "chosen": "결함부를 제거·보수 용접한 뒤 재검사로 건전성을 확인해야 합니다.",
+     "rejected": "작은 균열은 그냥 도장으로 덮으면 됩니다."},
+    {"prompt": "선박 사이버복원력 요건을 충족하려면?",
+     "chosen": "OT/IT 시스템 위험도 평가와 방어·복구 조치를 수립하고 근거를 문서화합니다.",
+     "rejected": "사이버 요건은 서류상으로만 있으면 됩니다."},
+    {"prompt": "자율운항선박의 자율기능을 승인받으려면?",
+     "chosen": "위험도 기반 평가로 안전성을 입증하고 선급 검토·검사를 거쳐 승인받습니다.",
+     "rejected": "자율기능은 별도 검증 없이 바로 운항하면 됩니다."},
 ]
 
 
@@ -342,6 +411,7 @@ def _pre_approval(svc, run: PipelineRun, body: RunPipelineBody) -> None:
             eval_cases = train_rows  # 선호정확도 평가는 {prompt,chosen,rejected} 사용
             fp = fingerprint(pref_examples)
             kind, n = "preference", len(train_rows)
+            samples = train_rows[:12]  # 상세 미리보기용 대표 레코드
         else:
             examples = filter_sft_by_length(to_sft_examples(labeled))
             tr, va, te = split_sft(examples, SplitConfig())
@@ -350,7 +420,9 @@ def _pre_approval(svc, run: PipelineRun, body: RunPipelineBody) -> None:
                           if l.get("text") and l.get("response")]
             fp = fingerprint(tr + va + te)
             kind, n = "sft", len(tr)
-        svc.datasets.add(DatasetManifest(name=body.name, kind=kind, fingerprint=fp, num_train=n))
+            samples = [l for l in labeled if l.get("text") and l.get("response")][:12]
+        svc.datasets.add(DatasetManifest(name=body.name, kind=kind, fingerprint=fp,
+                                         num_train=n, samples=samples))
         run.artifacts["fingerprint"] = fp
         st = _stage(run, "data-build")
         st.status = "succeeded"
@@ -362,9 +434,19 @@ def _pre_approval(svc, run: PipelineRun, body: RunPipelineBody) -> None:
         ft.status = "running"
         ex = _executor(svc)
         ft_kwargs: dict = {}
+        # 사용자 지정 하이퍼파라미터(executor가 CLI 플래그로 변환). HPO best_params가 있으면 그것이 우선.
+        hp: dict = {}
+        if getattr(body, "lr", None) is not None:
+            hp["learning_rate"] = body.lr
+        if getattr(body, "lora_r", None) is not None:
+            hp["lora_r"] = body.lora_r
+        if getattr(body, "lora_alpha", None) is not None:
+            hp["lora_alpha"] = body.lora_alpha
         best_params = _resolve_hpo_params(svc, body)
         if best_params:
-            ft_kwargs["hyperparams"] = best_params
+            hp.update(best_params)  # HPO 결과가 사용자 지정값을 덮어씀
+        if hp:
+            ft_kwargs["hyperparams"] = hp
         if getattr(body, "qlora", False):
             ft_kwargs["qlora"] = True
         adapter = ex.finetune(
@@ -373,9 +455,13 @@ def _pre_approval(svc, run: PipelineRun, body: RunPipelineBody) -> None:
         )
         run.artifacts["adapter"] = adapter
         run.loss_history = ex.last_loss  # 차트용 step별 loss
+        if ex.last_train_stats:  # trainable 수·가중치 변화량(학습 검증용)
+            run.artifacts["train_stats"] = json.dumps(ex.last_train_stats, ensure_ascii=False)
         hpo_note = " · HPO best_params 적용" if best_params else ""
+        tp = ex.last_train_stats.get("trainable_params")
+        tp_note = f" · trainable {tp:,}({ex.last_train_stats.get('trainable_pct')}%)" if tp else ""
         ft.detail = (f"{body.method.upper()}/{pet_label}(bf16) · "
-                     f"steps={body.train_max_steps} → {adapter}{hpo_note}")
+                     f"steps={body.train_max_steps} → {adapter}{hpo_note}{tp_note}")
         ft.status = "succeeded"
 
         _guard(run, deadline)
@@ -390,6 +476,23 @@ def _pre_approval(svc, run: PipelineRun, body: RunPipelineBody) -> None:
         )
         metrics = res["metrics"]
         num_cases = res.get("num_cases", len(eval_cases))
+        # base(학습 전) 평가 — 같은 eval을 어댑터 없이 돌려 학습 효과(개선폭)를 보여준다.
+        if getattr(body, "eval_base", True):
+            try:
+                base_res = _executor(svc).evaluate(
+                    run.id, eval_cases, task=task, use_adapter=False,
+                    prompt_name=body.prompt_name, prompt_label=body.prompt_label,
+                    use_rag=body.use_rag, rag_top_k=body.rag_top_k,
+                )
+                base_metrics = base_res.get("metrics", {})
+                run.artifacts["base_metrics"] = json.dumps(base_metrics, ensure_ascii=False)
+                run.artifacts["adapter_metrics"] = json.dumps(metrics, ensure_ascii=False)
+                run.artifacts["eval_delta"] = json.dumps(
+                    {k: round(float(metrics.get(k, 0)) - float(base_metrics.get(k, 0)), 4)
+                     for k in metrics if isinstance(metrics.get(k), (int, float))},
+                    ensure_ascii=False)
+            except Exception:  # noqa: BLE001  # base 평가 실패는 부가지표 — 파이프라인 계속
+                pass
         applied = []
         if res.get("prompt"):
             applied.append(f"프롬프트={res['prompt']}")

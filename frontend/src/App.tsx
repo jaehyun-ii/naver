@@ -16,6 +16,7 @@ import Review from "./pages/Review";
 import Safety from "./pages/Safety";
 import EvalVersions from "./pages/EvalVersions";
 import Benchmark from "./pages/Benchmark";
+import Aireg from "./pages/Aireg";
 import Drift from "./pages/Drift";
 import Serving from "./pages/Serving";
 import Tracking from "./pages/Tracking";
@@ -42,6 +43,7 @@ const IMPLEMENTED: Record<string, React.ComponentType> = {
   "/safety": Safety,
   "/evalv": EvalVersions,
   "/bench": Benchmark,
+  "/aireg": Aireg,
   "/drift": Drift,
   "/serving": Serving,
   "/mlflow": Tracking,

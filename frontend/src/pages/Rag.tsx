@@ -4,9 +4,12 @@ import {
   TableCell, TableHead, TableRow, TextField, Typography, IconButton, Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import MenuBookOutlined from "@mui/icons-material/MenuBookOutlined";
+import LayersOutlined from "@mui/icons-material/LayersOutlined";
+import SearchOutlined from "@mui/icons-material/Search";
 import { PageHeader } from "../components/PageHeader";
-import { MetricCard } from "../components/MetricCard";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { SummaryTiles } from "../components/SummaryTiles";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -245,18 +248,17 @@ export default function Rag() {
         }
       />
 
+      {data && (
+        <SummaryTiles stats={[
+          { label: "색인 문서", value: data.documents, hint: data.collection, icon: MenuBookOutlined },
+          { label: "임베딩 차원", value: data.dim, hint: data.embedder, icon: LayersOutlined },
+          { label: "top_k", value: data.top_k, hint: data.backend, icon: SearchOutlined },
+        ]} />
+      )}
+
       {error && <ErrorView message={error} />}
 
-      {loading && !data ? (
-        <Loading />
-      ) : data ? (
-        <Stack direction="row" spacing={2} sx={{ mb: 3, flexWrap: "wrap", gap: 2 }}>
-          <MetricCard label="색인 문서" value={data.documents} hint={`collection: ${data.collection}`} />
-          <MetricCard label="임베더" value={data.embedder} hint={`dim ${data.dim}`} />
-          <MetricCard label="백엔드" value={data.backend} />
-          <MetricCard label="top-k" value={data.top_k} hint="검색 반환 문서 수" />
-        </Stack>
-      ) : null}
+      {loading && !data && <Loading />}
 
       <IngestPanel onIngested={() => reload()} />
       <RetrievePanel />

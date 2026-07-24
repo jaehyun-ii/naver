@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   Alert, Box, Button, Card, CardContent, Chip, Dialog, DialogContent, DialogTitle,
-  Divider, IconButton, Stack, Table, TableBody, TableCell, TableHead, TableRow,
+  Divider, IconButton, MenuItem, Stack, Table, TableBody, TableCell, TableHead, TableRow,
   TextField, Tooltip, Typography,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -190,6 +190,91 @@ function ComparePanel() {
   );
 }
 
+interface DiffLine { t: "same" | "add" | "del"; text: string }
+function lineDiff(a: string[], b: string[]): DiffLine[] {
+  const n = a.length, m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out: DiffLine[] = []; let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push({ t: "same", text: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "del", text: a[i] }); i++; }
+    else { out.push({ t: "add", text: b[j] }); j++; }
+  }
+  while (i < n) out.push({ t: "del", text: a[i++] });
+  while (j < m) out.push({ t: "add", text: b[j++] });
+  return out;
+}
+
+/** 두 버전의 템플릿을 불러와 라인 단위 diff를 표시. */
+function VersionDiff({ entries }: { entries: PromptEntry[] }) {
+  const multi = entries.filter((e) => e.versions.length >= 2);
+  const [dn, setDn] = useState("");
+  const [va, setVa] = useState<number | "">("");
+  const [vb, setVb] = useState<number | "">("");
+  const [diff, setDiff] = useState<DiffLine[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const cur = multi.find((e) => e.name === dn);
+
+  const run = async () => {
+    if (!dn || va === "" || vb === "") return;
+    setBusy(true); setErr(null); setDiff(null);
+    try {
+      const [a, b] = await Promise.all([
+        api<VersionContent>(`/api/prompts/${encodeURIComponent(dn)}/${va}`),
+        api<VersionContent>(`/api/prompts/${encodeURIComponent(dn)}/${vb}`),
+      ]);
+      setDiff(lineDiff(a.template.split("\n"), b.template.split("\n")));
+    } catch (e) {
+      setErr(e instanceof ApiError ? `${e.message} (HTTP ${e.status})` : (e as Error).message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Card sx={{ flex: 1, minWidth: 320 }}>
+      <CardContent>
+        <Typography variant="h3" gutterBottom>버전 diff</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>두 버전의 텍스트 차이(추가/삭제)를 라인 단위로 비교합니다.</Typography>
+        {multi.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">버전이 2개 이상인 프롬프트가 없습니다.</Typography>
+        ) : (
+          <>
+            <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: "wrap", gap: 1 }}>
+              <TextField select size="small" label="프롬프트" value={dn}
+                onChange={(e) => { setDn(e.target.value); setVa(""); setVb(""); setDiff(null); }} sx={{ minWidth: 150 }}>
+                {multi.map((e) => <MenuItem key={e.name} value={e.name}>{e.name}</MenuItem>)}
+              </TextField>
+              <TextField select size="small" label="A" value={va === "" ? "" : String(va)} onChange={(e) => setVa(Number(e.target.value))} sx={{ width: 90 }} disabled={!cur}>
+                {(cur?.versions ?? []).map((v) => <MenuItem key={v} value={String(v)}>v{v}</MenuItem>)}
+              </TextField>
+              <TextField select size="small" label="B" value={vb === "" ? "" : String(vb)} onChange={(e) => setVb(Number(e.target.value))} sx={{ width: 90 }} disabled={!cur}>
+                {(cur?.versions ?? []).map((v) => <MenuItem key={v} value={String(v)}>v{v}</MenuItem>)}
+              </TextField>
+              <Button variant="contained" onClick={run} disabled={busy || !dn || va === "" || vb === ""}>{busy ? "…" : "비교"}</Button>
+            </Stack>
+            {err && <ErrorView message={err} />}
+            {diff && (
+              <Box sx={{ fontFamily: "ui-monospace, monospace", fontSize: 12.5, border: 1, borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
+                {diff.map((l, i) => (
+                  <Box key={i} sx={{
+                    px: 1, py: 0.15, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                    bgcolor: l.t === "add" ? "success.light" : l.t === "del" ? "error.light" : "transparent",
+                  }}>
+                    <Box component="span" sx={{ color: "text.disabled", mr: 1 }}>{l.t === "add" ? "+" : l.t === "del" ? "−" : " "}</Box>
+                    {l.text || " "}
+                  </Box>
+                ))}
+              </Box>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Prompts() {
   const catalog = useApi<CatalogItem[]>("/api/prompts/catalog");
   const list = useApi<PromptEntry[]>("/api/prompts");
@@ -264,6 +349,7 @@ export default function Prompts() {
           onCreated={() => list.reload()}
         />
         <ComparePanel />
+        <VersionDiff entries={entries} />
       </Stack>
 
       <Card sx={{ mb: 3 }}>

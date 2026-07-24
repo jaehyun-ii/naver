@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from llmops_core.common.security import ALL_ROLES, Principal
+from llmops_core.common.security import ALL_ROLES, ROLE_PERMISSIONS, Principal
 from llmops_core.console.security import require_perm
 from llmops_core.console.services import services
 
@@ -25,6 +25,12 @@ class IssueTokenBody(BaseModel):
 @router.get("/roles")
 def list_roles() -> dict:
     return {"roles": sorted(ALL_ROLES)}
+
+
+@router.get("/permissions")
+def list_permissions() -> dict:
+    """역할→권한 매트릭스(콘솔 RBAC 시각화용)."""
+    return {"permissions": {r: sorted(p) for r, p in ROLE_PERMISSIONS.items()}}
 
 
 @router.get("/tokens")

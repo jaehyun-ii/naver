@@ -4,9 +4,13 @@ import {
   TableCell, TableHead, TableRow, TextField, Typography, IconButton, Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import SpeedOutlined from "@mui/icons-material/SpeedOutlined";
+import AssessmentOutlined from "@mui/icons-material/AssessmentOutlined";
+import ModelTrainingOutlined from "@mui/icons-material/ModelTraining";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
 import { BarChart, type BarDatum } from "../components/Charts";
+import { SummaryTiles } from "../components/SummaryTiles";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -168,6 +172,14 @@ export default function Benchmark() {
         }
       />
 
+      {list.data && (
+        <SummaryTiles stats={[
+          { label: "벤치셋", value: list.data.length, hint: "고정 평가셋", icon: SpeedOutlined },
+          { label: "결과", value: results.data?.results?.length ?? 0, hint: "실행 기록", icon: AssessmentOutlined },
+          { label: "모델", value: modelsApi.data?.models?.length ?? 0, hint: "평가 대상", icon: ModelTrainingOutlined, accent: "success.main" },
+        ]} />
+      )}
+
       <Stack direction={{ xs: "column", md: "row" }} spacing={3} sx={{ mb: 3 }} alignItems="stretch">
         {/* 등록 */}
         <Card sx={{ flex: 1 }}>
@@ -289,10 +301,12 @@ export default function Benchmark() {
             <Stack spacing={3}>
               {leaderboard.map(([bench, rows]) => {
                 const pref = isPreference(rows[0]?.task ?? "reference");
-                const barData: BarDatum[] = rows.map((r) => ({
-                  label: r.model,
-                  value: pref ? r.metrics.preference_accuracy : r.metrics.answer_match,
-                }));
+                const barData: BarDatum[] = rows
+                  .map((r) => ({
+                    label: r.model,
+                    value: pref ? r.metrics.preference_accuracy : r.metrics.answer_match,
+                  }))
+                  .sort((a, b) => b.value - a.value); // 리더보드 랭킹(내림차순)
                 return (
                   <Box key={bench}>
                     <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>

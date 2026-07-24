@@ -25,10 +25,12 @@ _SAMPLE_LABELED = [
 
 
 class HPOBody(BaseModel):
-    labeled: list[dict] = Field(default_factory=list)  # {text,response}
-    eval: list[dict] = Field(default_factory=list)  # {question,expected}
+    method: str = "sft"  # sft | dpo | grpo
+    labeled: list[dict] = Field(default_factory=list)  # sft:{text,response} · dpo:{prompt,chosen,rejected} · grpo:{prompt}
+    eval: list[dict] = Field(default_factory=list)  # sft:{question,expected} · dpo:{prompt,chosen,rejected} · grpo:{prompt}
     trials: int = 4
     steps: int = 12
+    base_model: str | None = None
 
 
 def _run_real(hpo_id: str, body: HPOBody) -> None:
@@ -36,9 +38,15 @@ def _run_real(hpo_id: str, body: HPOBody) -> None:
     try:
         from llmops_core.console.executor import RealExecutor
 
-        labeled = body.labeled or _SAMPLE_LABELED
-        evalset = body.eval or [{"question": x["text"], "expected": x["response"]} for x in labeled]
-        res = RealExecutor().hpo(hpo_id, labeled, evalset, trials=body.trials, steps=body.steps)
+        method = body.method or "sft"
+        if method == "sft":
+            labeled = body.labeled or _SAMPLE_LABELED
+            evalset = body.eval or [{"question": x["text"], "expected": x["response"]} for x in labeled]
+        else:  # dpo/grpo: 선호/프롬프트 데이터는 그대로, eval 없으면 train으로 대체
+            labeled = body.labeled
+            evalset = body.eval or body.labeled
+        res = RealExecutor().hpo(hpo_id, labeled, evalset, trials=body.trials,
+                                 steps=body.steps, base_model=body.base_model, method=method)
         rec.update(status="succeeded", best_params=res.get("best_params"),
                    best_value=res.get("best_value"), trials=res.get("trials", []))
     except Exception as exc:  # noqa: BLE001
@@ -50,7 +58,7 @@ def _run_real(hpo_id: str, body: HPOBody) -> None:
 @router.post("/hpo")
 def start_hpo(body: HPOBody) -> dict:
     hpo_id = "hpo-" + secrets.token_urlsafe(5)
-    rec = {"id": hpo_id, "trials_n": body.trials, "status": "running",
+    rec = {"id": hpo_id, "method": body.method, "trials_n": body.trials, "status": "running",
            "created_at": time.time(), "trials": [], "best_params": None, "best_value": None}
     services().hpo.add(rec)
     threading.Thread(target=_run_real, args=(hpo_id, body), daemon=True).start()

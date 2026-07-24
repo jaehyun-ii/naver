@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.6",
     "pydantic-settings>=2.2",
     "fastapi>=0.110",
+    "python-multipart>=0.0.9",  # 파일 업로드(문서 인제스트) — FastAPI UploadFile/Form
     "uvicorn[standard]>=0.29",
     "httpx>=0.27",
     "boto3>=1.34",
@@ -41,6 +42,10 @@ quality = [
     "pandas>=2.0",
 ]
 dataset = ["datasets>=2.19", "dvc[s3]>=3.50"]
+# ── 문서 ETL (PDF → content_list.json, MinerU hybrid) ──
+# noksan_ax 파이프라인 이식. MinerU는 stock(비수정) — 같은 버전만 설치하면 동일.
+# 실제 VLM 추론은 별도 서버(PARSER_ENDPOINT)에서. pdftext=병합 후처리, pymupdf=이미지 크롭.
+etl = ["mineru[pipeline]>=3.3.1", "pdftext>=0.6", "pymupdf>=1.24", "pypdf>=5.6"]
 # ── 하류 런타임 (L4~L7) ──
 # redis: 공유 응답 캐시 + 분산 RPM 리미터(다중 인스턴스). gateway.redis_url 설정 시에만 필요.
 gateway = ["litellm>=1.40", "redis>=5.0"]
@@ -51,7 +56,8 @@ rag = [
     "qdrant-client>=1.9",
     "sentence-transformers>=2.7",
 ]
-training = ["unsloth", "trl>=0.9", "peft>=0.11", "transformers>=4.41", "datasets>=2.19"]
+# transformers 5.9+ : hyperclovax(SEED-Think) 네이티브 지원. unsloth는 tf5 미대응+GB10 프리빌트 없음 → 코드에서 optional(가드).
+training = ["trl>=1.7", "peft>=0.17", "transformers>=5.9", "datasets>=3.0", "accelerate>=1.2"]
 serving = ["vllm>=0.5"]
 tuning = ["optuna>=3.6"]
 tracking = ["mlflow>=2.13", "dvc[s3]>=3.50"]
@@ -72,7 +78,7 @@ all = [
     "litellm>=1.40", "redis>=5.0", "langchain-core>=0.2",
     "llama-index-core>=0.10", "llama-index-vector-stores-qdrant>=0.2",
     "qdrant-client>=1.9", "sentence-transformers>=2.7",
-    "trl>=0.9", "peft>=0.11", "transformers>=4.41", "datasets>=2.19",
+    "trl>=1.7", "peft>=0.17", "transformers>=5.9", "datasets>=3.0",
     "optuna>=3.6", "mlflow>=2.13", "dvc[s3]>=3.50",
     "ragas>=0.1.7", "deepeval>=0.21",
     "psycopg2-binary>=2.9", "alembic>=1.13", "SQLAlchemy>=2.0",

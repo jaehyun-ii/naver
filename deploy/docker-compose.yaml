@@ -114,17 +114,61 @@ services:
   console:
     image: llmops/core:latest
     depends_on: [gateway]
-    environment: *app_env
-    volumes: ["../config:/app/config:ro"]
+    environment:
+      <<: *app_env
+      # ── real 모드 오케스트레이션(콘솔이 host dockerd로 학습/서빙 컨테이너 실행) ──
+      # 주의: 경로는 host dockerd가 -v 마운트에 그대로 쓰므로 반드시 "호스트 경로"여야 하며,
+      #       콘솔 컨테이너에도 동일 경로로 bind-mount 해 파일을 공유한다(아래 volumes).
+      LLMOPS_EXEC__WORK_DIR: /home/jaehyun/Dev/naver/.runs
+      LLMOPS_EXEC__REPO_DIR: /home/jaehyun/Dev/naver/llmops_core
+      LLMOPS_EXEC__CONFIG_PATH: /home/jaehyun/Dev/naver/config/model_list.yaml
+      LLMOPS_EXEC__HF_CACHE: /home/jaehyun/.cache/huggingface/hub
+      LLMOPS_EXEC__TRAIN_IMAGE: llmops/train:latest
+      # 파이프라인 학습/평가/서빙 기본 베이스 모델(HF 캐시에 사전 다운로드 필요)
+      LLMOPS_EXEC__BASE_MODEL: naver-hyperclovax/HyperCLOVAX-SEED-Think-14B
+      LLMOPS_EXEC__SERVE_BACKEND: vllm
+      LLMOPS_EXEC__VLLM_IMAGE: vllm/vllm-openai:cu130-nightly # GB10(sm_121) 검증 이미지
+      LLMOPS_EXEC__SERVE_PORT: "8020"
+      LLMOPS_EXEC__SERVE_CONTAINER: llmops-tuned-serving
+      LLMOPS_EXEC__GATEWAY_CONTAINER: llmops-infra-gateway-1
+    volumes:
+      - "../config:/app/config:ro"
+      # 최신 콘솔 코드 라이브 마운트(editable 설치 /app 위에 덮어씀 — 재빌드 없이 반영)
+      - "../llmops_core:/app/llmops_core"
+      # 대시보드 GPU/서비스 텔레메트리 + real 모드용 host dockerd 제어
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      - "/usr/bin/docker:/usr/bin/docker:ro"
+      # host 동일 경로 bind-mount(위 LLMOPS_EXEC__* 경로 공유)
+      - "/home/jaehyun/Dev/naver:/home/jaehyun/Dev/naver"
+      - "/home/jaehyun/.cache/huggingface:/home/jaehyun/.cache/huggingface"
     extra_hosts: ["host.docker.internal:host-gateway"] # 콘솔 챗도 in-process 라우터 사용
+    # --reload: bind-mount된 llmops_core 코드 변경 시 콘솔 자동 재기동(개발 편의).
+    # uvicorn[standard]의 watchfiles가 /app/llmops_core를 감시한다.
     command:
-      ["uvicorn", "llmops_core.console.app:app", "--host", "0.0.0.0", "--port", "4100"]
+      ["uvicorn", "llmops_core.console.app:app", "--host", "0.0.0.0", "--port", "4100",
+       "--reload", "--reload-dir", "/app/llmops_core"]
     ports: ["4100:4100"]
+    deploy: # nvidia-smi 주입(대시보드 GPU 검출) — GB10 단일 GPU 공유
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, count: 1, capabilities: [gpu] }
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:4100/api/health"]
       interval: 15s
       timeout: 5s
       retries: 5
+
+  # ── 프런트엔드(web): Vite+React SPA(nginx) — /api는 console로 프록시 ──
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web/Dockerfile
+    image: llmops/web:x86
+    depends_on:
+      console: { condition: service_started }
+    ports: ["4200:80"]
+    restart: unless-stopped
 
   # ── 서빙(선택, GPU 프로파일): transformers OpenAI 서버 (GB10 호환) ──
   # 실행: docker compose --profile gpu up -d

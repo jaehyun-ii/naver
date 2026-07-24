@@ -1,0 +1,420 @@
+{
+  "_comment": "프롬프트 논문 계보 레지스트리 — Master Dataset에는 prompt_id/version만 저장하고 계보·수정 내역은 여기서 관리한다. 버전은 prompts.VERSIONS와 일치시킬 것.",
+  "RULE_CARD": {
+    "version": "v5",
+    "derived_from": [
+      {
+        "paper": "List2QA",
+        "component": "list type and logical relation classification",
+        "reuse_type": "pipeline_adaptation"
+      },
+      {
+        "paper": "AIReg-Bench",
+        "component": "regulation-conditioned generation",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "조·항·호·목 계층 메타데이터 입력 추가",
+      "조건 연산자(이상/이하/초과/미만)·값·단위 구조화",
+      "list_logic(ALL/ANY/SEQUENCE/OPTIONS/NESTED) 분류 추가",
+      "modality(의무/금지/허용/권고)·ambiguity 필드 추가",
+      "v5: 형식 예시의 실제 조문 값(SPP/230°C) 제거 — 특정 조 과적합 차단"
+    ]
+  },
+  "CASE_OVERVIEW": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "AIReg-Bench",
+        "component": "system outlines generation",
+        "reuse_type": "direct_adaptation"
+      }
+    ],
+    "modifications": [
+      "AI 시스템 개요를 선박·설비 사양 개요로 변경"
+    ]
+  },
+  "PROFILE": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "AIReg-Bench",
+        "component": "compliance profile generation",
+        "reuse_type": "direct_adaptation"
+      }
+    ],
+    "modifications": [
+      "위반 유형을 적합/미묘 부적합/명확 부적합/판단 불가로 확장",
+      "show-don't-tell 원칙(결론 선언 금지) 강화"
+    ]
+  },
+  "PROFILE_BOUNDARY": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "AIReg-Bench",
+        "component": "compliance profile generation",
+        "reuse_type": "procedure_adaptation"
+      },
+      {
+        "paper": "List2QA",
+        "component": "condition state assignment",
+        "reuse_type": "pipeline_adaptation"
+      }
+    ],
+    "modifications": [
+      "수치 경계값(포함/미포함) 정확 충족 적합 사례 전용 변형"
+    ]
+  },
+  "PROFILE_EXCEPTION_NM": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "AIReg-Bench",
+        "component": "compliance profile generation",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "예외 세부 조건 일부 충족·일부 미충족 → 예외 불성립 부적합 사례 전용 변형"
+    ]
+  },
+  "EXCERPT": {
+    "version": "v5",
+    "derived_from": [
+      {
+        "paper": "AIReg-Bench",
+        "component": "technical documentation generation",
+        "reuse_type": "direct_adaptation"
+      }
+    ],
+    "modifications": [
+      "선급 제출문서 문체·한국어 강제·규정 인용 금지(label leakage 차단)",
+      "v5: 발췌 공통 규칙(_EXCERPT_RULES) 추출 부착 — 결론 금지·규정 단어 금지·기준값 노출 금지·수치 현실성·건조 문체를 발췌 3종 공통화(분산 유지보수 해소) (2026-07-22)"
+    ]
+  },
+  "ANNOTATE": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "AIReg-Bench",
+        "component": "LLM annotation draft (expert review precursor)",
+        "reuse_type": "direct_adaptation"
+      }
+    ],
+    "modifications": [
+      "compliance/plausibility 1-5 점수·critical_evidence·missing_information 구조"
+    ]
+  },
+  "VERIFY": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "List2QA",
+        "component": "answerability, correctness, faithfulness, completeness filtering",
+        "reuse_type": "pipeline_adaptation"
+      },
+      {
+        "paper": "AIReg-Bench",
+        "component": "independent expert annotation",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "target_label 비공개 블라인드 재판정 → 프로그램 대조로 verdict 계산",
+      "조건 논리(ALL/ANY/예외 전부충족)·숫자/단위/경계 검증 항목 추가"
+    ]
+  },
+  "SPEC_QA": {
+    "version": "v3",
+    "derived_from": [
+      {
+        "paper": "Bonito/CTGA",
+        "component": "task-conditioned instruction-response generation",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "KRX-Bench 품질검수 기준(유일 결정·외부지식 금지·인용 원문 복사) 적용",
+      "v3: 한정어 보존(적용 범위 확대 방지)·원문 밖 수식어 창작 금지·영문 규범 술어 의미 보존 — 전문가 검수(2026-07-21) 수용분"
+    ]
+  },
+  "APPLICABILITY": {
+    "version": "v12",
+    "derived_from": [
+      {
+        "paper": "Bonito/CTGA",
+        "component": "task-conditioned instruction-response generation",
+        "reuse_type": "procedure_adaptation"
+      },
+      {
+        "paper": "AIReg-Bench",
+        "component": "regulation-conditioned scenario generation",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "적용/미적용/조건부 시나리오 쌍 생성, 결론 비노출 원칙",
+      "v3: 시나리오 대상·구역·설비 명칭을 원문 용어로 제한(유사어 치환 금지)",
+      "v4: 코퍼스 실제 용어(폐위된 구역) 예시 제거",
+      "v5: 의미축 지시(적용≠이행) — hierarchy v4 원칙 이식",
+      "v6: 시나리오 라벨 교대 선택(applicable 쏠림 9/9 해소) + 문서 적용범위 상속·선명 다양화 블록",
+      "v7: 의무 위반 ≠ 미적용 명시 — 미적용 시나리오는 적용 대상·범위 부정으로만 구성(실측: 요구 속성 부정을 미적용으로 오라벨)",
+      "v8: 조항 전체 기준 판정(일부 항 비적용≠미적용)·reason 메타 발화 금지·evidence_quote 요구 — 전문가 검수 2차(2026-07-21) 수용분",
+      "v9: 지시 통합·압축(의미 불변) — 적용vs이행/위반≠미적용 병합, reason 규칙 병합, 9규칙→6 (4bit 생성 모델 지시 추종 한계 대응) (2026-07-22)",
+      "v10: 판정 관련 호·단서 전부 평가('별도 검토 필요' 금지)·시나리오에 평가 필요 사실 완비 — 정비 스모크에서 기준 6 발동((3)호 미평가) 생성측 대응 (2026-07-22)",
+      "v11: premise_check(관련 호·단서/시나리오 사실) 선작성 구조 + reason 형식 예시(추상) — precedence branch_check의 1시도 ACCEPT 실증을 이식, metadata 저장·미작성 시 premise_check_missing 검수행 (2026-07-22)",
+      "v12: premise_check 중첩 객체 → premise_clauses/premise_facts 평면 필드 — 피드백 라운드에서 4bit 모델이 중첩 내부 객체만 최상위로 출력하는 붕괴 실측 (2026-07-22)"
+    ]
+  },
+  "CROSSREF_QA": {
+    "version": "v5",
+    "derived_from": [
+      {
+        "paper": "Bonito/CTGA",
+        "component": "task-conditioned instruction-response generation",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "두 조항 결합 필수 제약(단일 조항 답변 가능 질문 금지)",
+      "v3: 원문 밖 조항번호·수치 사용 금지 + 항 표기 합성(\"401.1항\") 금지 — 번호형 xdoc 실측(외부 조번호 날조 3/5) 대응",
+      "v4: 수식 기호 역할 단일성(F↔K1 혼동 실측)·특별요건 우선(1508 실측)·유실 값 질문 금지 — 전문가 검수 3차(2026-07-21)",
+      "v5: 참조 내용 전개 필수(번호만 반복 = 무효 명시)·질문 전제-적용범위 무모순 — 40건 배치 10편 A103 실측(답이 본 조항 단서 되풀이, 기준 6 검증기 미검출) (2026-07-22)"
+    ]
+  },
+  "COMPARE_QA": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "Bonito/CTGA",
+        "component": "task-conditioned instruction-response generation",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "선급 간 공통/차이/단독 요건 구조 비교 답변"
+    ]
+  },
+  "RAFT_TRAINING": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "RAFT",
+        "component": "oracle + distractor documents with citation-grounded answers",
+        "reuse_type": "direct_adaptation"
+      }
+    ],
+    "modifications": [
+      "no-golden(검색 실패 내성) 결정적 층화 20%",
+      "같은 장 혼동 조항 1 + 타 장 무작위 2 distractor 구성",
+      "공통 규정 답변 형식(판단/근거/조건 검토/추가 확인 정보) 적용"
+    ]
+  },
+  "EXCEPTION_STRUCT": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "List2QA",
+        "component": "list type and logical relation classification",
+        "reuse_type": "pipeline_adaptation"
+      }
+    ],
+    "modifications": [
+      "예외 텍스트 → evaluator v1 지원 연산자 조건 구조화",
+      "정성 조건은 qualitative_conditions로 분리(구조화 금지)"
+    ]
+  },
+  "VERIFY_CASE": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "AIReg-Bench",
+        "component": "independent expert annotation",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "구조화 사례 적용성 4라벨(APPLICABLE/NOT/EXCEPTION/INSUFFICIENT) 블라인드 재판정",
+      "예외 전부충족 원칙 명시"
+    ]
+  },
+  "CASE_BUILDER": {
+    "version": "v1",
+    "derived_from": [
+      {
+        "paper": "List2QA",
+        "component": "condition state assignment",
+        "reuse_type": "pipeline_adaptation"
+      }
+    ],
+    "modifications": [
+      "LLM 비개입 결정적 mutation(경계값 3변형·예외 4변형)",
+      "라벨은 condition_evaluator 계산 — 계획 불일치 시 케이스 제외"
+    ]
+  },
+  "DEF_LINK_QA": {
+    "version": "v4",
+    "derived_from": [
+      {
+        "paper": "내부 CROSSREF_QA",
+        "component": "2-근거(evidence 2건) QA 구성",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "정의 조를 참조 풀에 포함(요건 필터 우회)",
+      "질문 내 정의 원문 누출 정적 검증",
+      "사실→용어 매핑 강제(show-don't-tell 변형)",
+      "v2: 조건문·재량 표현 보존(원격검사기술 실측)·조항 표기 합성/가상 표준번호 금지(ISO 0000 실측)·질문 수치 활용 완전성 — 전문가 검수 4차(2026-07-21)",
+      "v3: 참조로 열린 정의 금지(\"402.1에 따른 탱크\"류)·억지 결합 금지 — 검수 10차 CNG A411·1편 A1701 (2026-07-22)",
+      "v4: 참조 체인 폐쇄(사용자 설계 논의) — 라우터가 정의 속 조 참조를 by_no로 해소해 3번째 근거 동봉, answer는 정의→참조 요건→시나리오로 완결. 미해소 정의만 금지. 검증기·수치앵커 3-근거 확장 (2026-07-22)"
+    ]
+  },
+  "PRECEDENCE_QA": {
+    "version": "v8",
+    "derived_from": [
+      {
+        "paper": "AIReg-Bench",
+        "component": "scenario 기반 판정",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "특별규정 우선(lex specialis) 판단 전용",
+      "우선 마커 문구 인용 강제 + 원문 부분문자열 검증",
+      "상대 조 해석 실패 시 본문-단서 self 모드",
+      "v2: branch_check 선판정(본문/단서 적용 조건 나열 후 answer 일치 강제) + 단서 효과 대체 금지 + 원문 용어 제한",
+      "v3: relation(OVERRIDES/SUBSTITUTES/EXCEPTION/ADDITIONAL/UNCLEAR) + explicit_marker — 명시 근거 없는 배제·대체 결론 정적 검출",
+      "v4: 문서 적용범위 상속·선명 다양화 블록",
+      "v5: 관계 유형 확장(LIMITED_EXCEPTION·DISCRETIONARY)·재량 표현 확정 결론 금지·배제 범위 한정·특별규정 대상 전부 일치 — 전문가 검수 6차(2026-07-21)",
+      "v6: 지시 통합·압축(의미 불변) — answer 결론 규칙 4종을 relation 하위 구조로 재편, 재량 확정 금지 중복 제거 (2026-07-22)",
+      "v7: answer 서두에 질문이 대비시킨 두 규정 중 우선 쪽 명시적 결론 — 스모크 기준 6 발동(우선 규정 미명시) 대응 (2026-07-22)",
+      "v8: 질문 제시 두 규정=branch_check·answer 비교 규정 일치 강제 — 검수 10차 OSV A204 (2026-07-22)"
+    ]
+  },
+  "TABLE_LOOKUP_QA": {
+    "version": "v3",
+    "derived_from": [
+      {
+        "paper": "KRX-Bench",
+        "component": "품질검수(유일 결정·외부지식 금지)",
+        "reuse_type": "criteria_reuse"
+      }
+    ],
+    "modifications": [
+      "표의 정확히 한 행 선택 조건 강제",
+      "row_selector·answer_value의 표 원문 부분문자열 정적 검증",
+      "v2: column_selector·셀 좌표 프로버넌스 + 표에 없는 헤더 날조 금지, 라우터가 헤더 미복원 표는 배정 차단",
+      "v3: 구간 경계 보존(넘고=초과, 실측: 150이상/미만 오기)·셀 조건 표현(필요시) 보존 + 셀 대조 정규화(HTML 엔티티·LaTeX — 오탐 4건) — 전문가 검수 7차(2026-07-21)"
+    ]
+  },
+  "HIERARCHY_QA": {
+    "version": "v10",
+    "derived_from": [
+      {
+        "paper": "내부 APPLICABILITY",
+        "component": "적용/미적용 시나리오",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "항>호>목 경로를 정적 파서가 부여(LLM 임의 선택 금지)",
+      "상위 전제 불충족 시나리오 권장",
+      "answer 내 경로 토큰 정적 검증",
+      "v2: 시나리오 용어를 원문 용어로 제한(유사어 치환 금지)",
+      "v3: 코퍼스 실제 용어(폐위된 구역) 예시 제거",
+      "v4: 의미축 지시 추가(적용 여부만 판정, 이행 여부 무관 — build_cases INTENT_NOTES의 RULE_APPLIES 원칙 이식)",
+      "v5: 문서 적용범위 상속·선명 다양화 블록",
+      "v6: 의무 위반 ≠ 미적용 명시 — no는 대상·상위 전제가 범위 밖일 때만(실측: 제1종 요구를 적용 전제로 오해)",
+      "v7: 상위 항 성격 판별(범위 정의 vs 수행 의무)·절차 서술≠적용 전제·병행 조항 배타 해석 금지·정의형 질문 전환·시나리오 무모순 — 전문가 검수 8차(2026-07-21)",
+      "v8: scenario 기재 사실 확정 취급 — answer의 '명시되지 않았다' 유보 금지 + judgment_conclusion_issues에 시나리오 사실 유보 프로그램 게이트(스모크: 자기 시나리오 오독 실측) (2026-07-22)",
+      "v9: premise_check(상위 전제 성격/최하위 조건/시나리오 정렬) 선작성 + answer 형식 예시 — 1차 수율 개선 (2026-07-22)",
+      "v10: premise_check 중첩 → premise_upper/premise_leaf/premise_alignment 평면 필드 — A107 ERROR 연쇄(중첩 붕괴→빈 행) 해소, ACCEPT 전환 실증 (2026-07-22)"
+    ]
+  },
+  "UNIT_EXCERPT": {
+    "version": "v4",
+    "derived_from": [
+      {
+        "paper": "AIReg-Bench",
+        "component": "excerpt show-don't-tell",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "수치·단위·라벨은 프로그램이 결정(LLM은 문장 렌더링만)",
+      "환산값 표기 그대로 포함 강제 + 재파싱·역환산 라벨 재검증",
+      "v2: 물리량 명칭(fact_name) 고정 — 수치를 규정 외 물리량(단면계수 등)에 붙이는 오류 차단",
+      "v3: 대상 설비 일치(타두재→프로펠러축 치환 실측)·조항 기준값 발췌 노출 금지 — 전문가 검수 9차(2026-07-21)",
+      "v4: _EXCERPT_RULES 공통화(v3 기준값 노출 금지·결론 금지 규칙이 공통 블록으로 이동) (2026-07-22)"
+    ]
+  },
+  "SUITE_VERIFY": {
+    "version": "v6",
+    "derived_from": [
+      {
+        "paper": "List2QA",
+        "component": "독립 검증자 재판정",
+        "reuse_type": "procedure_adaptation"
+      },
+      {
+        "paper": "내부 VERIFY",
+        "component": "블라인드(생성 맥락 미제공) 검증",
+        "reuse_type": "procedure_adaptation"
+      }
+    ],
+    "modifications": [
+      "의미 수준 검증 4기준(전제 일치·유일 도출·용어 대응·수치 경계)",
+      "유사 용어 쌍 정적 검출(프로그램) → 점검 항목 주입(판단은 LLM)",
+      "형식 불량 응답은 보수적 REJECT",
+      "v2: 실제 조문(규칙길이 97%) 예시 제거 — 검증 대상 답 누출 차단 + 수치 앵커 대조 절차 일반화",
+      "v3: 기준1을 '원문에 관해 서술한 내용'으로 한정 + 판정형 가이드 추가 — 의도적 범위 밖 시나리오(미적용 출제)를 전제 불일치로 오판하는 과잉 거절 차단",
+      "v4: 무근거 수치 정적 검출(원문·질문 부재 수치) → 검증 점검 항목 주입, 판단은 LLM(환산·계산 구분)",
+      "v5: 기준 5(시나리오 내부 일관성) 추가 — 상반 상태 병존 시나리오가 ACCEPT된 실측 대응",
+      "v6: 기준 6(응답 완전성 — 번호 인용만으로 내용 답변 대체 금지·등급/구역 실제 특정 요구)·기준 7(판정 전제 충분성 — 예외/승인 경로 존재 시 시나리오 명시 요구) 추가 + crossref 트랙에 특별요건 우선 강제 점검 블록(SUITE_VERIFY_XREF_WATCH) 조건부 주입 — 검수 9차 \"REJECT 정밀도 좋으나 ACCEPT 확정 약함\" 대응 (2026-07-22)"
+    ]
+  },
+  "STYLE_AUGMENT": {
+    "version": "v3",
+    "modifications": [
+      "v1: 학습셋 질문 레지스터 변형(polite/field/no_path) — 래퍼만 재작성, 블록 불변, 의미 보존 게이트 5종(수치·결론 누출·항호 참조·경로 제거·주제어) (2026-07-21)",
+      "v2: 항·호 참조 시 조 앵커(번호 NNN./CSR 다단/제목 실사) 필수 게이트(전 스타일) + [상황]/[개요] 블록 흡수 허용(수치 전량 보존·실사 커버리지 ≥0.6 시 블록 제거, [발췌] 흡수 불가) — KR 원문 인용 관례 실측(호 단독 313건은 같은 조 내부 한정) 반영 (2026-07-21)",
+      "v2 후처리 추가: 블록 포장 자연화 — 실서빙(채팅 직접 붙여넣기) 확정에 따라 [발췌]/[상황] 대괄호 라벨을 자연 도입문(레지스터별) 또는 맨 붙여넣기로 교체(질문 id 기반 결정적). 본문은 프로그램 축자 이동 — 내용 불변 구성상 보장 + 검증 단언. 프롬프트 본문 불변 (2026-07-21)",
+      "v3: 경어체 통일(전 프롬프트 하십시오체 정합)·LANG_RULE 부착 (2026-07-22)"
+    ]
+  },
+  "ONESHOT_CASE": {
+    "version": "v4",
+    "modifications": [
+      "v4: _EXCERPT_RULES 공통화 — 기준값 노출 금지 신규 적용 (2026-07-22)"
+    ]
+  },
+  "PIPELINE_NOTES": {
+    "version": "-",
+    "modifications": [
+      "2026-07-22: 그림 위임 조항(_FIGURE_BOUND \"그림 N에 따라/의하여/나타낸\") 판정형 4트랙 생성 전 스킵 — 필연 REJECT·콜 낭비 예방",
+      "2026-07-22: refs_block — 원문 실재 표·그림·조항 표기 목록(_REF_PAT 동일 어휘)을 생성 프롬프트 8트랙에 선제 주입, foreign_reference REJECT 사전 예방",
+      "2026-07-22: chat_scenario 견고화 — essential 검사(부분 파싱 검출)·실패 시 max_tokens 단계 상향(+800×2)·최선 출력 보존",
+      "2026-07-22: 기호 오적용 방지 2층 — ①foreign_symbols 게이트(질문·답변의 라틴 기호가 evidence 원문에 없으면 재생성; 접지원은 evidence만 — 질문 순환 접지 차단, 단위·원소 화이트리스트, REJECT류) ②verify_suite에 symbol_pairs(같은 밑글자·다른 첨자)·side_pairs(~측 대립쌍) — TERM_WATCH 주입 + 수치 앵커 결정 검사 통합. 실측: A4.2.2의 Zb/Zs/Zw 창작 검출, 기존 ACCEPT 51건 소급 시 하드 오탐 0(정책 진양성 2 — 유실 기호 복원)",
+      "2026-07-22: 표 재인용(requote_table) — 값 실재(_cell_in 통과)인데 <td> 마크업으로 축자(quote_in) 실패한 표 quote를 원문 행 텍스트로 교체(커버리지 ≥0.8 최단 후보), metadata.requoted 기록 + _cell_in 구분자에 쉼표·세미콜론 추가(쉼표 결합 복합 셀 실측 오탐). exp8_v6 table REVIEW 소급 → ACCEPT 전환",
+      "2026-07-22: 조 앵커 원칙 전면 적용(anchor_question) — 조항 스코프 트랙(hierarchy·precedence·table_lookup·unit_convert)은 질문에 [대상 조항] 경로/「경로」 무조건 명시, 주제형(spec·crossref·def_link)은 부유 참조(항·호·목·표·그림) 존재 시에만. 기식별 질문(「」·조번호·다단)은 중복 방지. STYLE_AUGMENT no_path/field 게이트가 [대상 조항] 표기도 제거 대상으로 확장. 골든 예시 4건(hierarchy·precedence·table·unit) 및 SUITE_QA_PIPELINE.md 동기 패치",
+      "2026-07-22: 학습 투입 질문 자연화 기본화 — build_training.suite_rows가 조립 시점에 naturalize_question(구조 라벨 [발췌]/[상황]/[개요] 제거·맨 붙여넣기, 본문 축자, [대상 조항] 앵커 유지) 적용. 원본 파일은 라벨 유지(검수·게이트 파싱). 도입문 없이 라벨만 제거 — 래퍼 어체와의 충돌 방지, 어체 다양화는 스타일 변형본 담당",
+      "2026-07-22: _issue_class 오분류 수정 — 맨 '누락'·'무관' 힌트가 답변 결함 서술('계산이 누락됨'·'무관한 수치')에 매칭돼 재생성 가능 건을 조기 REVIEW(source_insufficient)로 유실(40건 배치 def_link A202 실측). 소스 한계 전용 표현으로 한정 + 답변 결함 표지(사용함·포함·치환·일치하지 않 등) 공존 시 GENERATION 우선",
+      "2026-07-22: xref_unexpanded 게이트 — crossref 답변에 참조 번호 언급이 있는데 참조 조항 고유 실사 겹침<3 & 고유 수치 공유 0이면 미전개로 재생성(REJECT류). 소급: 기존 crossref ACCEPT 8건 오탐 0, A103 정검출",
+      "2026-07-22: 재량 단서 처리 확정(사용자 설계 논의 반영) — RAG는 '다른 조항 텍스트 부족'만 해결하고 재량 단서의 부족분은 사안 사실(선급 참작 여부)이라 확정 불가 → 회피(충족만 생성) 대신 **조건부 서술**: 미충족 판정 유지 + 답변에 단서 인용·확인 필요 명시(프로그램 조립). relief_clause_uncertain 게이트는 '단서 미명시 단정'만 검수행. 확장 후보로 판정형 evidence에 문서 적용범위 조항 동반(다중 근거 판정화) 기록",
+      "2026-07-22: foreign_refs 합성 표기 완화 — 정규 인용형 'NNN.의 N항'은 문자 일치 없어도 해당 조가 evidence에 실재(+그 조 원문에 항 마커)하면 접지 인정(_composed_grounded). 실측: v5 참조 전개가 성공한 A103·A202가 표기 차이('101.의 3항' vs 원문 '101. 3항')만으로 6시도 낭비 후 REJECT → 완화 후 정적 게이트 전체 통과+재검증 ACCEPT 회수. 날조('999.의 7항'·'표 3.14.4') 검출은 유지",
+      "2026-07-22: 외부 검토(검수 사이드카 51건) 수용분 — ①verdict에 issue_codes(기준 1~7 enum: PREMISE_MISMATCH/NOT_DERIVABLE/TERM_MISMATCH/NUMERIC_BOUNDARY/SCENARIO_INCONSISTENT/INCOMPLETE_ANSWER/PREMISE_INSUFFICIENT) ②행 quality 등급(silver=LLM 검수/gold=전문가 확인) ③gen_meta ts RFC3339 타임존 ④merge_qa.py(트랙 병합 all_qa.jsonl). 미수용(오해 정정): '질문·근거·정답 부재'는 사이드카 특성 — 본체 *_qa.jsonl에 전부 존재. split은 이미 문서 단위보다 강한 클러스터 단위 설계. 로드맵 수용: REJECT 실답변의 DPO rejected 재활용(+ANSWER_REPAIR로 chosen 생성), skills/failure_modes 다중 태깅, superseded 상태 표시",
+      "2026-07-22 검수 10차 반영: ①doc_name() — 청크 doc_title 전 문서 동일 오염을 파일명 파생으로 복구(base_row·doc_scope_block·앵커 \"[대상 조항] 문서명 · 경로\") — 문서범위 게이트 무력화의 근본 원인 ②doc_scope_mismatch 전 트랙 확장(시나리오 판정형 5트랙, 특수 문서 대상어 미포함 질문 검수행) ③evidence_meta — normalized_quote·char_start/end·provision_id(KR:P10:C7:S1:A103)·evidence_language ④파일럿 58건은 suite_v1_pilot으로 보존, suite_v1 전면 재생성",
+      "2026-07-22 검수 11차 반영: ①doc_scope 게이트 자기 무력화 수정 — 앵커([대상 조항] 문서명) 줄 제거 후 시나리오 텍스트로 검사 + 동의어 별칭(FPSO↔부유식 등) + crossref([상황] 보유 시) 포함 ②evidence 스팬 ws-map 역매핑(char_start/end 항상 원문 좌표)·quote_hash·evidence_span_unresolved 게이트(추적 불가 저장만 하고 통과 금지) ③requirement_ids 폴백=[provision_id] 전 evidence ④def 참조 해소 정밀화 — 같은 장 우선, 미해소 참조 용어는 후보 스킵, definition_ref_quote 필수·quote_in 검증(3-근거 인용 완결)",
+      "2026-07-22 별칭 하드코딩 제거(사용자 지적: 예제 7개 과적합) — _SUBJ_ALIASES 사전 삭제, _subject_aliases()로 전량 코퍼스·프로그램 도출: ①파일명 괄호 약어('해상작업지원선(OSV)'→OSV) ②적용범위 조항의 자기 지칭 선언('이하 구조물이라 한다'→구조물, 라우터가 특수 문서 2,535조항에 scope 텍스트 부착) ③대상어 접미 부분어(해상작업지원선→작업지원선). PDF 공백 오염('구 조물') 대비 공백 무시 정규화 대조"
+    ]
+  },
+  "ANSWER_REPAIR": {
+    "version": "v1",
+    "modifications": [
+      "v1: 답변 국소 수리 — 검증 거절 사유가 전부 답변측(답변/결론/완전)일 때 질문·시나리오 보존, 답변만 교정 후 정적 게이트 재확인+재검증(런당 1회, 프로그램 조립 트랙 unit_convert·table_lookup 제외) (2026-07-22)"
+    ]
+  }
+}

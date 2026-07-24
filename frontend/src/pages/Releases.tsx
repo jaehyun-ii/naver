@@ -5,8 +5,14 @@ import {
   TableRow, TextField, Typography, IconButton, Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import PendingActionsOutlined from "@mui/icons-material/PendingActionsOutlined";
+import CheckCircleOutline from "@mui/icons-material/CheckCircleOutline";
+import HighlightOffOutlined from "@mui/icons-material/HighlightOff";
+import VerifiedOutlined from "@mui/icons-material/VerifiedOutlined";
+import GavelOutlined from "@mui/icons-material/GavelOutlined";
 import { PageHeader } from "../components/PageHeader";
-import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { Loading, ErrorView } from "../components/StateViews";
+import { SummaryTiles, RichEmpty } from "../components/SummaryTiles";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -42,6 +48,12 @@ export default function Releases() {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const rels = data ?? [];
+  const pending = rels.filter((r) => r.status === "Pending").length;
+  const approved = rels.filter((r) => r.status === "Approved").length;
+  const rejected = rels.filter((r) => r.status === "Rejected").length;
+  const gatePassed = rels.filter((r) => r.auto_gate_passed).length;
 
   const openDialog = (release: ReleaseRequest, kind: "approve" | "reject") => {
     setDecision({ release, kind });
@@ -79,20 +91,31 @@ export default function Releases() {
         }
       />
 
-      <Card>
+      {rels.length > 0 && (
+        <SummaryTiles stats={[
+          { label: "승인 대기", value: pending, hint: "결정 필요", icon: PendingActionsOutlined, accent: "warning.main" },
+          { label: "승인됨", value: approved, icon: CheckCircleOutline, accent: "success.main" },
+          { label: "반려됨", value: rejected, icon: HighlightOffOutlined, accent: "error.main" },
+          { label: "게이트 통과", value: gatePassed, hint: `${rels.length}건 중`, icon: VerifiedOutlined },
+        ]} />
+      )}
+
+      <Card variant="outlined" sx={{ borderRadius: 3 }}>
         <CardContent>
           {loading && !data ? (
             <Loading />
           ) : error ? (
             <ErrorView message={error} />
           ) : !data || data.length === 0 ? (
-            <EmptyView message="승인 대기 중인 릴리즈가 없습니다." />
+            <RichEmpty icon={GavelOutlined} title="승인 대기 중인 릴리즈가 없습니다"
+              hint="파이프라인이 자동 게이트를 통과하면 후보 모델과 평가 지표가 승인 요청으로 여기에 올라옵니다."
+              actionLabel="파이프라인 실행" to="/pipe" />
           ) : (
             <Table size="small">
               <TableHead>
                 <TableRow>
                   <TableCell>모델</TableCell>
-                  <TableCell>Suite</TableCell>
+                  <TableCell>평가 지표</TableCell>
                   <TableCell>자동게이트</TableCell>
                   <TableCell>상태</TableCell>
                   <TableCell align="right">액션</TableCell>
@@ -102,7 +125,16 @@ export default function Releases() {
                 {data.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell sx={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{r.model_ref}</TableCell>
-                    <TableCell>{r.suite ?? "—"}</TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                        {Object.entries(r.metrics).length === 0
+                          ? <Typography variant="caption" color="text.secondary">—</Typography>
+                          : Object.entries(r.metrics).map(([k, v]) => (
+                              <Chip key={k} size="small" variant="outlined" label={`${k} ${v.toFixed(3)}`}
+                                sx={{ fontFamily: "ui-monospace, monospace", fontSize: 11 }} />
+                            ))}
+                      </Stack>
+                    </TableCell>
                     <TableCell>
                       <Chip
                         size="small" variant="outlined"

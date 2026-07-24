@@ -1,0 +1,94 @@
+/* Primitive Color Tokens — 색상 정의 전용.
+ * 컴포넌트에서 직접 쓰지 말고 semantic-color.css의 Semantic Token을 사용한다.
+ * 참조: docs/COLOR_GUIDELINE.md */
+:root {
+  /* Primary */
+  --color-primary-0: #FFFFFF;
+  --color-primary-5: #EFF5FF;
+  --color-primary-10: #D3E1FB;
+  --color-primary-20: #A7C4F7;
+  --color-primary-30: #7CA6F3;
+  --color-primary-40: #5089EF;
+  --color-primary-50: #246BEB;
+  --color-primary-60: #1D56BC;
+  --color-primary-70: #16408D;
+  --color-primary-80: #0E2B5E;
+  --color-primary-90: #07152F;
+  --color-primary-100: #000000;
+
+  /* Secondary */
+  --color-secondary-0: #FFFFFF;
+  --color-secondary-5: #EDF1F5;
+  --color-secondary-10: #CDD7E4;
+  --color-secondary-20: #B4C4D6;
+  --color-secondary-30: #99B0CB;
+  --color-secondary-40: #2A5C96;
+  --color-secondary-50: #003675;
+  --color-secondary-60: #002B5E;
+  --color-secondary-70: #002046;
+  --color-secondary-80: #00162F;
+  --color-secondary-90: #000B17;
+  --color-secondary-100: #000000;
+
+  /* Gray */
+  --color-gray-0: #FFFFFF;
+  --color-gray-5: #F8F8F8;
+  --color-gray-10: #F0F0F0;
+  --color-gray-20: #E4E4E4;
+  --color-gray-30: #D8D8D8;
+  --color-gray-40: #C6C6C6;
+  --color-gray-50: #8E8E8E;
+  --color-gray-60: #717171;
+  --color-gray-70: #555555;
+  --color-gray-80: #2D2D2D;
+  --color-gray-90: #1D1D1D;
+  --color-gray-100: #000000;
+
+  /* Danger */
+  --color-danger-5: #FEECF0;
+  --color-danger-10: #FCD4DE;
+  --color-danger-20: #F799B1;
+  --color-danger-30: #F36689;
+  --color-danger-40: #EF3E5E;
+  --color-danger-50: #EB003B;
+  --color-danger-60: #D50136;
+  --color-danger-70: #8D0023;
+  --color-danger-80: #5E0018;
+  --color-danger-90: #2F000C;
+
+  /* Warning */
+  --color-warning-5: #FFF8E9;
+  --color-warning-10: #FFEAC1;
+  --color-warning-20: #FFE2A7;
+  --color-warning-30: #FFD47C;
+  --color-warning-40: #FFC550;
+  --color-warning-50: #FFB724;
+  --color-warning-60: #98690A;
+  --color-warning-70: #66490E;
+  --color-warning-80: #4D370B;
+  --color-warning-90: #332507;
+
+  /* Success */
+  --color-success-5: #EEF7F0;
+  --color-success-10: #CEE9D4;
+  --color-success-20: #B2DCBB;
+  --color-success-30: #8CCA99;
+  --color-success-40: #33A14B;
+  --color-success-50: #008A1E;
+  --color-success-60: #006E18;
+  --color-success-70: #005312;
+  --color-success-80: #00370C;
+  --color-success-90: #002207;
+
+  /* Information */
+  --color-information-5: #E9F0FF;
+  --color-information-10: #D4E1FF;
+  --color-information-20: #A9C3FF;
+  --color-information-30: #7DA4FF;
+  --color-information-40: #5286FF;
+  --color-information-50: #2768FF;
+  --color-information-60: #1F53CC;
+  --color-information-70: #173E99;
+  --color-information-80: #0C1F4D;
+  --color-information-90: #040A1A;
+}

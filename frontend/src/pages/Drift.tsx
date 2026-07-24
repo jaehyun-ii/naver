@@ -5,8 +5,13 @@ import {
   Typography, IconButton, Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import TimelineOutlined from "@mui/icons-material/TimelineOutlined";
+import DatasetOutlined from "@mui/icons-material/DatasetOutlined";
+import StraightenOutlined from "@mui/icons-material/Straighten";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
+import { SummaryTiles } from "../components/SummaryTiles";
+import { BarChart } from "../components/Charts";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -179,6 +184,14 @@ function CheckPanel({ baselines }: { baselines: Baseline[] }) {
                 기준선 <b>{rep.name}</b> · ref={rep.n_reference} · cur={rep.n_current}
               </Typography>
             </Stack>
+            <Box sx={{ mb: 2 }}>
+              <BarChart
+                data={Object.entries(rep.scores).map(([k, v]) => ({
+                  label: k, value: v, threshold: rep.thresholds[k],
+                }))}
+                fmt={(v) => v.toFixed(3)}
+              />
+            </Box>
             <Table size="small">
               <TableHead>
                 <TableRow>
@@ -335,6 +348,14 @@ export default function Drift() {
           </Tooltip>
         }
       />
+
+      {(data?.length ?? 0) > 0 && (
+        <SummaryTiles stats={[
+          { label: "기준선", value: data!.length, hint: "등록된 baseline", icon: TimelineOutlined },
+          { label: "총 표본", value: data!.reduce((a, b) => a + (b.n ?? 0), 0), hint: "reference 텍스트", icon: DatasetOutlined },
+          { label: "평균 길이", value: Math.round(data!.reduce((a, b) => a + (b.avg_len ?? 0), 0) / Math.max(data!.length, 1)), hint: "문자", icon: StraightenOutlined },
+        ]} />
+      )}
 
       <BaselineForm onDone={() => reload()} />
       <CheckPanel baselines={baselines} />

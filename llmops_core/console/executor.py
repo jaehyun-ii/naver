@@ -49,7 +49,7 @@ class ExecutorConfig:
     vllm_image: str = field(default_factory=lambda: _env("VLLM_IMAGE", "vllm/vllm-openai:latest"))
     base_model: str = field(
         default_factory=lambda: _env(
-            "BASE_MODEL", "naver-hyperclovax/HyperCLOVAX-SEED-Text-Instruct-0.5B"
+            "BASE_MODEL", "naver-hyperclovax/HyperCLOVAX-SEED-Think-14B"
         )
     )
     serve_port: int = field(default_factory=lambda: int(_env("SERVE_PORT", "8020")))
@@ -89,12 +89,33 @@ def _parse_loss_curve(stdout: str) -> list[dict]:
     return points
 
 
+def _parse_train_stats(stdout: str) -> dict:
+    """학습 컨테이너 stdout에서 trainable 수·가중치 변화(adapter_delta_norm) 라인을 추출."""
+    import ast
+
+    stats: dict = {}
+    for line in (stdout or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        if "trainable_params" not in line and "adapter_delta_norm" not in line:
+            continue
+        try:
+            d = ast.literal_eval(line)
+        except (ValueError, SyntaxError):
+            continue
+        if isinstance(d, dict):
+            stats.update(d)
+    return stats
+
+
 class RealExecutor:
     """docker CLI를 통해 실제 학습/병합/배포를 실행한다."""
 
     def __init__(self, cfg: ExecutorConfig | None = None) -> None:
         self.cfg = cfg or ExecutorConfig()
         self.last_loss: list[dict] = []  # 직전 finetune의 step별 loss(차트용)
+        self.last_train_stats: dict = {}  # 직전 finetune의 trainable 수·가중치 변화량
         Path(self.cfg.work_dir).mkdir(parents=True, exist_ok=True)
 
     # ── 내부 유틸 ──
@@ -182,6 +203,9 @@ class RealExecutor:
     _HP_FLAGS: dict[str, str] = {
         "learning_rate": "--lr", "lr": "--lr",
         "lora_r": "--lora-r",
+        "lora_alpha": "--lora-alpha",
+        "beta": "--beta", "dpo_beta": "--beta",              # DPO β
+        "num_generations": "--num-generations",              # GRPO 그룹 크기
         "batch_size": "--batch-size", "per_device_train_batch_size": "--batch-size",
         "grad_accum": "--grad-accum", "gradient_accumulation_steps": "--grad-accum",
         "max_seq_length": "--max-seq-length",
@@ -225,6 +249,7 @@ class RealExecutor:
                 tail += [flag, str(val)]
         out = self._gpu_run(tail)
         self.last_loss = _parse_loss_curve(out)  # 차트용 step별 loss
+        self.last_train_stats = _parse_train_stats(out)  # trainable 수·가중치 변화량
         if not (adapter_host / "adapter_config.json").exists():
             raise ExecutorError("학습은 끝났으나 어댑터 산출물이 없습니다")
         return str(adapter_host)
@@ -234,6 +259,7 @@ class RealExecutor:
         self, run_id: str, cases: list[dict], *, base_model: str | None = None,
         task: str = "reference", prompt_name: str | None = None,
         prompt_label: str = "prod", use_rag: bool = False, rag_top_k: int = 4,
+        use_adapter: bool = True,
     ) -> dict:
         """run_id의 어댑터로 cases를 평가 → {metrics, num_cases} 반환.
 
@@ -248,7 +274,7 @@ class RealExecutor:
         주입을 거치게 한다(서빙이 RAG 기반일 때). 스토어가 없으면 빈 KB로 무영향.
         """
         rd = self._run_dir(run_id)
-        if not (rd / "adapter" / "adapter_config.json").exists():
+        if use_adapter and not (rd / "adapter" / "adapter_config.json").exists():
             raise ExecutorError("평가할 어댑터가 없습니다 (먼저 finetune)")
         eval_jsonl = rd / "eval.jsonl"
         eval_jsonl.write_text(
@@ -280,7 +306,7 @@ class RealExecutor:
             "--entrypoint", "python3", self.cfg.train_image,
             "-m", "llmops_core.evaluation.local_eval",
             "--base", base_model or self.cfg.base_model,
-            "--adapter", "/work/adapter",
+            *(["--adapter", "/work/adapter"] if use_adapter else []),  # 미지정 → base(학습 전) 평가
             "--cases", "/work/eval.jsonl",
             "--task", task,
             "--out", "/work/metrics.json",
@@ -328,8 +354,13 @@ class RealExecutor:
 
     # ── HPO(Optuna) ──
     def hpo(self, run_id: str, labeled: list[dict], eval_cases: list[dict], *,
-            trials: int = 4, steps: int = 12, base_model: str | None = None) -> dict:
-        """학습 컨테이너에서 Optuna HPO 실행 → {best_params, best_value, trials} 반환."""
+            trials: int = 4, steps: int = 12, base_model: str | None = None,
+            method: str = "sft") -> dict:
+        """학습 컨테이너에서 Optuna HPO 실행 → {best_params, best_value, trials} 반환.
+
+        method별 데이터: sft={messages|text/response}·eval{question,expected},
+        dpo=train/eval{prompt,chosen,rejected}, grpo=train/eval{prompt}.
+        """
         rd = self._run_dir(f"hpo-{run_id}")
         (rd / "train.jsonl").write_text(
             "\n".join(json.dumps(r, ensure_ascii=False) for r in labeled), encoding="utf-8")
@@ -339,6 +370,7 @@ class RealExecutor:
             *self._common_mounts(), "-v", f"{rd}:/work",
             "--entrypoint", "python3", self.cfg.train_image,
             "-m", "llmops_core.tuning.run",
+            "--method", method,
             "--train", "/work/train.jsonl", "--eval", "/work/eval.jsonl",
             "--base", base_model or self.cfg.base_model,
             "--trials", str(trials), "--steps", str(steps), "--out", "/work/hpo.json",
@@ -415,7 +447,7 @@ class RealExecutor:
             return self.cfg.vllm_image, [
                 "--model", "/model", "--served-model-name", served_name,
                 "--port", "8000", "--gpu-memory-utilization", "0.90",
-                "--max-model-len", "4096",
+                "--max-model-len", "4096", "--trust-remote-code",
             ]
         # 대체: transformers(hf_server) — vllm 미가용 환경용 레퍼런스 백엔드
         return self.cfg.serve_image, [

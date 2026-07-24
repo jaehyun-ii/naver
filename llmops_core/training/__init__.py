@@ -9,7 +9,6 @@ from llmops_core.training.sft import (
     run_dpo,
     run_dpo_peft,
     run_grpo_peft,
-    run_ppo_peft,
     run_sft,
     run_sft_peft,
 )
@@ -22,5 +21,4 @@ __all__ = [
     "run_dpo",
     "run_dpo_peft",
     "run_grpo_peft",
-    "run_ppo_peft",
 ]

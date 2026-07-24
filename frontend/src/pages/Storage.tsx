@@ -6,7 +6,11 @@ import {
 import RefreshIcon from "@mui/icons-material/Refresh";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import DownloadIcon from "@mui/icons-material/Download";
+import FolderOutlined from "@mui/icons-material/FolderOutlined";
+import DescriptionOutlined from "@mui/icons-material/DescriptionOutlined";
+import StorageOutlined from "@mui/icons-material/Storage";
 import { PageHeader } from "../components/PageHeader";
+import { SummaryTiles } from "../components/SummaryTiles";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
@@ -110,6 +114,14 @@ export default function Storage() {
           </Tooltip>
         }
       />
+
+      {buckets.data?.available && (
+        <SummaryTiles stats={[
+          { label: "버킷", value: bucketList.length, hint: "MinIO/S3", icon: FolderOutlined },
+          { label: "객체", value: objectList.length, hint: bucket || "버킷 선택", icon: DescriptionOutlined },
+          { label: "총 용량", value: `${(objectList.reduce((a, o) => a + (o.size || 0), 0) / 1e6).toFixed(1)} MB`, hint: "현재 목록", icon: StorageOutlined, accent: "success.main" },
+        ]} />
+      )}
 
       <Card sx={{ mb: 3 }}>
         <CardContent>

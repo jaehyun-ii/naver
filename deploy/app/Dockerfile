@@ -1,7 +1,10 @@
 # llmops_core 코어 앱 이미지 — 게이트웨이(OpenAI 호환) + 콘솔(운영 UI).
 # 같은 이미지를 command만 바꿔 gateway/console 두 서비스로 띄운다.
 # GPU 의존(serving=vllm/transformers, training=unsloth)은 별도 이미지(deploy/serving/Dockerfile.hf).
-FROM python:3.12-slim
+# 베이스는 빌드 인자로 선택. 슬림(gateway/기본) vs nvcr pytorch(콘솔 풀 — torch 재사용, train/hf와 레이어 공유).
+#   콘솔 풀: --build-arg BASE_IMAGE=nvcr.io/nvidia/pytorch:26.03-py3
+ARG BASE_IMAGE=python:3.12-slim
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
@@ -16,6 +19,11 @@ RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-27.
     && mv /tmp/docker/docker /usr/local/bin/docker \
     && rm -rf /tmp/docker
 
+# venv(system-site-packages)로 격리 — nvcr 베이스의 debian 관리 패키지(RECORD 없음)를 pip가
+# 업그레이드/제거하려다 실패하는 것을 원천 차단. --system-site-packages로 베이스의 torch/CUDA는
+# 그대로 재사용(재다운로드 없음), 신규·업그레이드 패키지는 venv에만 설치된다. 슬림 베이스에도 무해.
+RUN python -m venv --system-site-packages /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
 # 의존성 캐시 레이어: 메타데이터 먼저 복사

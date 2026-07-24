@@ -35,13 +35,14 @@ def merge_lora(cfg: MergeConfig) -> str:
         raise OptionalDependencyError("transformers/peft", "training") from exc
 
     dtype = getattr(torch, cfg.dtype)
-    base = AutoModelForCausalLM.from_pretrained(cfg.base_model, torch_dtype=dtype)
+    base = AutoModelForCausalLM.from_pretrained(cfg.base_model, torch_dtype=dtype,
+                                                trust_remote_code=True)
     model = PeftModel.from_pretrained(base, cfg.adapter_path)
     merged = model.merge_and_unload()  # 어댑터를 베이스에 병합
     merged.save_pretrained(
         cfg.output_dir, safe_serialization=True, max_shard_size=cfg.max_shard_size
     )
-    AutoTokenizer.from_pretrained(cfg.base_model).save_pretrained(cfg.output_dir)
+    AutoTokenizer.from_pretrained(cfg.base_model, trust_remote_code=True).save_pretrained(cfg.output_dir)
     return cfg.output_dir
 
 

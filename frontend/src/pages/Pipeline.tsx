@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useState } from "react";
 import {
   Box, Button, Card, CardContent, Chip, Divider, MenuItem, Stack, Table,
   TableBody, TableCell, TableHead, TableRow, TextField, Typography,
@@ -36,10 +36,10 @@ interface PipelineRun {
   created_at?: number | null;
 }
 
-const SFT_SAMPLE = `{"text": "환불 절차를 알려주세요.", "response": "주문 내역에서 환불 신청 후 3영업일 내 처리됩니다."}
-{"text": "배송은 얼마나 걸리나요?", "response": "결제 완료 후 평균 2~3일 소요됩니다."}`;
+const SFT_SAMPLE = `{"text": "선급증서 유효기간이 지나면 어떻게 해야 하나요?", "response": "선급이 정지될 수 있으므로 즉시 선급기관에 재검사를 신청해 증서를 갱신해야 합니다."}
+{"text": "정기검사(Special Survey)는 몇 년 주기인가요?", "response": "정기검사는 5년 주기로 시행하며, 선체·기관·의장 상태를 종합 확인합니다."}`;
 
-const DPO_SAMPLE = `{"prompt": "환불 절차를 알려주세요.", "chosen": "주문 내역에서 환불 신청 후 3영업일 내 처리됩니다.", "rejected": "몰라요."}`;
+const DPO_SAMPLE = `{"prompt": "선급증서 유효기간이 지나면?", "chosen": "선급이 정지될 수 있으므로 즉시 선급기관에 재검사를 신청해 갱신합니다.", "rejected": "그냥 둬도 됩니다."}`;
 
 function parseJsonl(txt: string): Record<string, unknown>[] {
   return txt
@@ -97,16 +97,196 @@ function StageDots({ stages }: { stages: PipelineStage[] }) {
 
 const RUNNING = ["running", "post-running"];
 
+const pj = (s?: string): Record<string, unknown> | null => {
+  if (!s) return null;
+  try { return JSON.parse(s); } catch { return null; }
+};
+
+// 학습 loss 하강 곡선 — 외부 차트 의존 없이 인라인 SVG 스파크라인
+function Sparkline({ points }: { points: number[] }) {
+  const w = 300, h = 60, pad = 5;
+  const min = Math.min(...points), max = Math.max(...points), rng = max - min || 1;
+  const X = (i: number) => pad + (i / (points.length - 1)) * (w - 2 * pad);
+  const Y = (v: number) => pad + (1 - (v - min) / rng) * (h - 2 * pad);
+  const line = points.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(" ");
+  const area = `${line} L${X(points.length - 1).toFixed(1)} ${h - pad} L${X(0).toFixed(1)} ${h - pad} Z`;
+  return (
+    <Box sx={{ color: "primary.main" }}>
+      <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} preserveAspectRatio="none" role="img" aria-label="학습 loss 곡선">
+        <path d={area} fill="currentColor" opacity={0.1} />
+        <path d={line} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round" />
+        <circle cx={X(points.length - 1)} cy={Y(points[points.length - 1])} r={2.6} fill="currentColor" />
+      </svg>
+    </Box>
+  );
+}
+
+function Tile({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Box sx={{ border: 1, borderColor: "divider", borderRadius: 2, p: 1.5, minWidth: 0 }}>
+      <Typography variant="caption" color="text.secondary"
+        sx={{ textTransform: "uppercase", letterSpacing: ".04em", fontWeight: 600, display: "block", mb: 0.5 }}>
+        {label}
+      </Typography>
+      {children}
+    </Box>
+  );
+}
+
+// 학습이 실제로 됐는지 한눈에: loss곡선 · trainable수(%) · ΔW norm · 어댑터 존재 · base→adapter 개선폭
+function TrainingVerification({ detail }: { detail: PipelineRun }) {
+  const stats = pj(detail.artifacts.train_stats);
+  const baseM = pj(detail.artifacts.base_metrics);
+  const adaM = pj(detail.artifacts.adapter_metrics);
+  const loss = (detail.loss_history ?? []).map((p) => Number(p.loss)).filter((v) => !Number.isNaN(v));
+  const hasAdapter = Boolean(detail.artifacts.adapter);
+  if (!loss.length && !stats && !adaM && !hasAdapter) return null;
+
+  const first = loss[0], last = loss[loss.length - 1];
+  const mkeys = adaM ? Object.keys(adaM).filter((k) => typeof adaM[k] === "number") : [];
+  const tp = stats?.trainable_params as number | undefined;
+
+  return (
+    <>
+      <Divider sx={{ my: 2 }} />
+      <Typography variant="body2" fontWeight={700} sx={{ mb: 1.5 }}>학습 검증</Typography>
+      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" }, gap: 1.5 }}>
+
+        {loss.length > 1 && (
+          <Tile label={`학습 loss · ${loss.length} steps`}>
+            <Sparkline points={loss} />
+            <Stack direction="row" justifyContent="space-between" sx={{ mt: 0.5 }}>
+              <Typography variant="caption" color="text.secondary">start {first.toFixed(3)}</Typography>
+              <Typography variant="caption" sx={{ color: last <= first ? "success.main" : "error.main", fontWeight: 700 }}>
+                end {last.toFixed(3)} {last <= first ? "↓" : "↑"}
+              </Typography>
+            </Stack>
+          </Tile>
+        )}
+
+        <Tile label="LoRA 파라미터 · 가중치 변화">
+          {tp != null ? (
+            <>
+              <Typography variant="h4" sx={{ fontFamily: "ui-monospace, monospace", lineHeight: 1.15 }}>
+                {tp.toLocaleString()}
+                <Typography component="span" variant="caption" color="text.secondary"> 학습 / {Number(stats?.total_params).toLocaleString()}</Typography>
+              </Typography>
+              <Box sx={{ height: 6, borderRadius: 3, bgcolor: "action.hover", mt: 0.75, overflow: "hidden" }}>
+                <Box sx={{ height: "100%", width: `${Math.min(Number(stats?.trainable_pct) || 0, 100)}%`, bgcolor: "primary.main" }} />
+              </Box>
+              <Typography variant="caption" color="text.secondary">전체의 {String(stats?.trainable_pct)}% 만 학습 (동결된 원본은 그대로)</Typography>
+            </>
+          ) : <Typography variant="caption" color="text.secondary">trainable 정보 없음</Typography>}
+          <Stack direction="row" spacing={1} sx={{ mt: 1 }} alignItems="center" flexWrap="wrap" useFlexGap>
+            {stats?.adapter_delta_norm != null && (
+              <Chip size="small" variant="outlined" label={`ΔW norm ${String(stats.adapter_delta_norm)}`} />
+            )}
+            <Chip size="small" color={hasAdapter ? "success" : "default"} variant={hasAdapter ? "filled" : "outlined"}
+              label={hasAdapter ? "어댑터 산출 ✓" : "어댑터 없음"} />
+          </Stack>
+        </Tile>
+
+        {mkeys.length > 0 && (
+          <Box sx={{ gridColumn: { md: "1 / -1" } }}>
+            <Tile label="base(학습 전) → adapter(학습 후) 지표">
+              <Stack spacing={1.25} sx={{ mt: 0.5 }}>
+                {mkeys.map((k) => {
+                  const a = Number(adaM![k]); const b = Number(baseM?.[k] ?? 0); const d = a - b; const up = d >= 0;
+                  return (
+                    <Box key={k}>
+                      <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+                        <Typography variant="body2" sx={{ fontFamily: "ui-monospace, monospace" }}>{k}</Typography>
+                        <Stack direction="row" spacing={1} alignItems="baseline">
+                          <Typography variant="caption" color="text.secondary">{b.toFixed(3)} → {a.toFixed(3)}</Typography>
+                          <Chip size="small" color={up ? "success" : "error"} label={`${up ? "+" : ""}${d.toFixed(3)} ${up ? "↑" : "↓"}`} />
+                        </Stack>
+                      </Stack>
+                      <Box sx={{ position: "relative", height: 7, borderRadius: 3, bgcolor: "action.hover", mt: 0.5, overflow: "hidden" }}>
+                        <Box sx={{ position: "absolute", top: 0, bottom: 0, left: 0, width: `${Math.max(0, Math.min(b * 100, 100))}%`, bgcolor: "text.disabled", opacity: 0.45 }} />
+                        <Box sx={{ position: "absolute", top: 0, bottom: 0, left: 0, width: `${Math.max(0, Math.min(a * 100, 100))}%`, bgcolor: up ? "success.main" : "error.main", opacity: 0.85 }} />
+                      </Box>
+                    </Box>
+                  );
+                })}
+              </Stack>
+            </Tile>
+          </Box>
+        )}
+      </Box>
+    </>
+  );
+}
+
+interface HpoStudy {
+  id: string;
+  status: string;
+  method?: string;
+  best_params: Record<string, number | string> | null;
+  best_value?: number | null;
+}
+
+interface DsManifest { name: string; kind: string; fingerprint: string; num_train: number; samples?: Record<string, unknown>[] }
+
+// 데이터셋 대표 샘플 → 학습 폼 JSONL(방식별 포맷)로 정규화.
+function sampleToLine(s: Record<string, unknown>, kind: string): object | null {
+  if (kind === "preference") {
+    return s.prompt ? { prompt: s.prompt, chosen: s.chosen, rejected: s.rejected } : null;
+  }
+  if (s.text !== undefined) return { text: s.text, response: s.response };
+  const msgs = s.messages as { role?: string; content?: string }[] | undefined;
+  if (Array.isArray(msgs)) {
+    const u = msgs.find((m) => m.role === "user")?.content;
+    const a = msgs.find((m) => m.role === "assistant")?.content;
+    if (u && a) return { text: u, response: a };
+  }
+  return null;
+}
+function datasetToJsonl(d: DsManifest): string {
+  return (d.samples ?? [])
+    .map((s) => sampleToLine(s, d.kind))
+    .filter((x): x is object => x != null)
+    .map((o) => JSON.stringify(o))
+    .join("\n");
+}
+
 export default function Pipeline() {
   const { data, loading, error, reload } = useApi<PipelineRun[]>("/api/pipeline/runs");
   const runs = data ?? [];
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterQuery, setFilterQuery] = useState("");
+  const filteredRuns = runs.filter((r) =>
+    (filterStatus === "all" || r.status === filterStatus) &&
+    (!filterQuery ||
+      r.name.toLowerCase().includes(filterQuery.toLowerCase()) ||
+      r.id.toLowerCase().includes(filterQuery.toLowerCase()) ||
+      (r.artifacts.served_name || "").toLowerCase().includes(filterQuery.toLowerCase())));
+  const { data: hpoData } = useApi<HpoStudy[]>("/api/tuning/hpo");
+  const hpoStudies = (hpoData ?? []).filter((h) => h.status === "succeeded" && h.best_params);
+  const datasets = useApi<DsManifest[]>("/api/data/datasets");
 
   // 실행 폼 상태
   const [method, setMethod] = useState<"sft" | "dpo">("sft");
   const [pet, setPet] = useState<"lora" | "dora">("lora");
   const [servedName, setServedName] = useState("hcx-seed-tuned");
   const [maxSteps, setMaxSteps] = useState("30");
+  // 하이퍼파라미터 override (빈 값 = 학습기 기본값 사용)
+  const [epochs, setEpochs] = useState("");
+  const [lr, setLr] = useState("");
+  const [loraR, setLoraR] = useState("");
+  const [loraAlpha, setLoraAlpha] = useState("");
+  const [gateThr, setGateThr] = useState("");
+  const [hpoId, setHpoId] = useState("");
+  const [selectedDs, setSelectedDs] = useState("");
   const [dataText, setDataText] = useState(SFT_SAMPLE);
+
+  const pickDataset = (fp: string) => {
+    setSelectedDs(fp);
+    const d = datasets.data?.find((x) => x.fingerprint === fp);
+    if (!d) return;
+    setMethod(d.kind === "preference" ? "dpo" : "sft");
+    const jsonl = datasetToJsonl(d);
+    if (jsonl) setDataText(jsonl);
+  };
   const [runBusy, setRunBusy] = useState(false);
   const [runErr, setRunErr] = useState<string | null>(null);
 
@@ -159,6 +339,13 @@ export default function Pipeline() {
         served_name: servedName,
         train_max_steps: Number(maxSteps),
       };
+      if (epochs.trim()) body.train_epochs = Number(epochs);
+      if (lr.trim()) body.lr = Number(lr);
+      if (loraR.trim()) body.lora_r = Number(loraR);
+      if (loraAlpha.trim()) body.lora_alpha = Number(loraAlpha);
+      if (gateThr.trim())
+        body.gate_thresholds = { [method === "dpo" ? "preference_accuracy" : "answer_match"]: Number(gateThr) };
+      if (hpoId) body.hpo_id = hpoId;
       if (method === "dpo") body.preference = rows;
       else body.labeled = rows;
       const out = await api<PipelineRun>("/api/pipeline/run", { method: "POST", body });
@@ -190,12 +377,16 @@ export default function Pipeline() {
     }
   };
 
-  const artifacts = useMemo(() => Object.entries(detail?.artifacts ?? {}), [detail]);
+  // 학습 검증 패널이 시각화하는 원시 JSON은 산출물 목록에서 제외(중복 방지)
+  const artifacts = useMemo(() => {
+    const hidden = new Set(["train_stats", "base_metrics", "adapter_metrics", "eval_delta"]);
+    return Object.entries(detail?.artifacts ?? {}).filter(([k]) => !hidden.has(k));
+  }, [detail]);
 
   return (
     <>
       <PageHeader
-        title="파이프라인(직접 실행)"
+        title="학습 파이프라인"
         subtitle="데이터 적재·품질·학습·병합·평가·승인·배포를 한 번에 실행하고 진행 상황을 조회합니다."
         action={
           <Tooltip title="새로고침">
@@ -227,7 +418,7 @@ export default function Pipeline() {
             <TextField
               label="max_steps" size="small" value={maxSteps}
               onChange={(e) => setMaxSteps(e.target.value)}
-              sx={{ width: 120 }}
+              sx={{ width: 110 }}
             />
             <TextField
               label="배포 모델명" size="small" value={servedName}
@@ -235,8 +426,59 @@ export default function Pipeline() {
               sx={{ minWidth: 200 }}
             />
           </Stack>
+          <Stack direction="row" spacing={2} sx={{ mb: 2, flexWrap: "wrap", gap: 2 }}>
+            <TextField label="epochs" size="small" value={epochs} placeholder="1.0"
+              onChange={(e) => setEpochs(e.target.value)} sx={{ width: 100 }} />
+            <TextField label="learning rate" size="small" value={lr} placeholder="2e-4"
+              onChange={(e) => setLr(e.target.value)} sx={{ width: 120 }} />
+            <TextField label="lora_r" size="small" value={loraR} placeholder="16"
+              onChange={(e) => setLoraR(e.target.value)} sx={{ width: 100 }} />
+            <TextField label="lora_alpha" size="small" value={loraAlpha} placeholder="32"
+              onChange={(e) => setLoraAlpha(e.target.value)} sx={{ width: 110 }} />
+            <TextField label="게이트 임계값" size="small" value={gateThr} placeholder="0.7"
+              onChange={(e) => setGateThr(e.target.value)} sx={{ width: 150 }}
+              helperText={method === "dpo" ? "preference_accuracy" : "answer_match"} />
+            <TextField
+              select label="HPO 적용" size="small" value={hpoId}
+              onChange={(e) => setHpoId(e.target.value)} sx={{ minWidth: 240 }}
+              helperText={hpoStudies.length ? "완료된 HPO 스터디(선택 시 best_params 우선)" : "완료된 HPO 없음"}
+            >
+              <MenuItem value="">없음 (수동)</MenuItem>
+              {hpoStudies.map((h) => (
+                <MenuItem key={h.id} value={h.id}>
+                  {h.id} · {h.method ?? "sft"}{h.best_value != null ? ` · score ${Number(h.best_value).toFixed(3)}` : ""}
+                </MenuItem>
+              ))}
+            </TextField>
+          </Stack>
+          {hpoId ? (
+            <Typography variant="caption" color="primary.main" sx={{ display: "block", mb: 1 }}>
+              HPO 「{hpoId}」의 best_params 적용:{" "}
+              {Object.entries(hpoStudies.find((h) => h.id === hpoId)?.best_params ?? {})
+                .map(([k, v]) => `${k}=${v}`)
+                .join(" · ")}
+              {" "}— 위 수동 하이퍼파라미터는 무시됩니다.
+            </Typography>
+          ) : (
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+              하이퍼파라미터는 비워 두면 학습기 기본값(lr 2e-4 · lora_r 16 · lora_alpha 32 · epochs 1.0)을 사용합니다.
+            </Typography>
+          )}
+          <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ mb: 1.5, flexWrap: "wrap", gap: 1 }}>
+            <TextField select size="small" label="등록 데이터셋에서 불러오기" value={selectedDs}
+              onChange={(e) => pickDataset(e.target.value)} sx={{ minWidth: 300 }}
+              helperText={(datasets.data?.length ?? 0) === 0 ? "등록된 데이터셋 없음 — 데이터셋 페이지에서 빌드하세요" : "선택하면 대표 샘플이 아래에 로드됩니다"}>
+              <MenuItem value="">직접 입력</MenuItem>
+              {(datasets.data ?? []).map((d) => (
+                <MenuItem key={d.fingerprint} value={d.fingerprint}>
+                  {d.name} · {d.kind} · train {d.num_train} (샘플 {d.samples?.length ?? 0})
+                </MenuItem>
+              ))}
+            </TextField>
+          </Stack>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
             학습 데이터 (<code>{method === "dpo" ? "{ prompt, chosen, rejected }" : "{ text, response }"}</code> JSONL · 한 줄에 하나)
+            {selectedDs && <Typography component="span" variant="caption" color="primary.main" sx={{ ml: 1 }}>· 데이터셋에서 로드됨</Typography>}
           </Typography>
           <TextField
             multiline minRows={5} fullWidth value={dataText}
@@ -254,7 +496,19 @@ export default function Pipeline() {
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Typography variant="h3" gutterBottom>실행 목록</Typography>
+          <Stack direction="row" spacing={1.5} alignItems="center" sx={{ mb: 1.5, flexWrap: "wrap", gap: 1 }}>
+            <Typography variant="h3" sx={{ flexGrow: 1 }}>
+              실행 목록 <Typography component="span" variant="caption" color="text.secondary">({filteredRuns.length}/{runs.length})</Typography>
+            </Typography>
+            <TextField select size="small" label="상태" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} sx={{ width: 130 }}>
+              <MenuItem value="all">전체</MenuItem>
+              <MenuItem value="running">진행 중</MenuItem>
+              <MenuItem value="waiting">대기(승인)</MenuItem>
+              <MenuItem value="succeeded">완료</MenuItem>
+              <MenuItem value="failed">실패</MenuItem>
+            </TextField>
+            <TextField size="small" label="검색 (이름·ID·모델)" value={filterQuery} onChange={(e) => setFilterQuery(e.target.value)} sx={{ minWidth: 200 }} />
+          </Stack>
           {loading && !data ? (
             <Loading />
           ) : error ? (
@@ -273,7 +527,12 @@ export default function Pipeline() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {runs.map((r) => (
+                {filteredRuns.length === 0 && (
+                  <TableRow><TableCell colSpan={5}>
+                    <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>필터 조건에 맞는 실행이 없습니다.</Typography>
+                  </TableCell></TableRow>
+                )}
+                {filteredRuns.map((r) => (
                   <TableRow key={r.id} hover selected={detail?.id === r.id}>
                     <TableCell sx={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{r.id}</TableCell>
                     <TableCell>{r.name}</TableCell>
@@ -342,11 +601,7 @@ export default function Pipeline() {
                   </TableBody>
                 </Table>
 
-                {detail.loss_history.length > 0 && (
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                    학습 loss: {detail.loss_history.length} steps
-                  </Typography>
-                )}
+                <TrainingVerification detail={detail} />
 
                 {artifacts.length > 0 && (
                   <>

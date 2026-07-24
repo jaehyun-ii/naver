@@ -10,18 +10,20 @@ from llmops_core.common.config import get_settings
 from llmops_core.rag.embedder import Embedder, make_embedder
 from llmops_core.rag.store import Document, Hit, make_vector_store
 
+# 문서 블록·헤더는 학습 데이터(RAFT: "[검색된 규정 조항]" + "[문서 i] 경로\n본문")와
+# 동일 형식 — 파인튜닝 모델이 학습한 프롬프트 표면과 서빙을 일치시킨다.
 _DEFAULT_SYSTEM = (
-    "다음 컨텍스트만 근거로 한국어로 답하세요. 컨텍스트에 없으면 모른다고 답하세요.\n\n"
-    "[컨텍스트]\n{context}"
+    "다음 검색된 규정 조항만 근거로 한국어로 답하세요. 조항에 없으면 모른다고 답하세요.\n\n"
+    "[검색된 규정 조항]\n{context}"
 )
-_CONTEXT_INSTRUCTION = "다음 컨텍스트를 참고해 답하세요."
+_CONTEXT_INSTRUCTION = "다음 컨텍스트(검색된 규정 조항)를 참고해 답하세요."
 
 # bge-m3 코사인 유사도 하한(무관 문서 컷). 해시 폴백(dev)은 0.0=미적용으로 둔다.
 _DEFAULT_SCORE_THRESHOLD = 0.3
 
 
 def context_block(context: str) -> str:
-    return f"{_CONTEXT_INSTRUCTION}\n\n[컨텍스트]\n{context}"
+    return f"{_CONTEXT_INSTRUCTION}\n\n[검색된 규정 조항]\n{context}"
 
 
 def compose_system(base_system: str | None, context: str | None) -> str | None:
@@ -97,7 +99,16 @@ class RagPipeline:
         return hits
 
     def build_context(self, hits: list[Hit]) -> str:
-        return "\n\n".join(f"- {h.document.text}" for h in hits)
+        """학습 데이터(RAFT)와 동일한 문서 블록 — "[문서 i] 계층경로\\n본문"."""
+        blocks = []
+        for i, h in enumerate(hits, 1):
+            meta = getattr(h.document, "metadata", None) or {}
+            path = meta.get("section_path") or ""
+            if isinstance(path, list):
+                path = " > ".join(path)
+            head = f"[문서 {i}]" + (f" {path}" if path else "")
+            blocks.append(f"{head}\n{h.document.text}")
+        return "\n\n".join(blocks)
 
     def augment(self, query: str, *, k: int | None = None,
                 system_template: str | None = None) -> tuple[list[dict], list[Hit]]:

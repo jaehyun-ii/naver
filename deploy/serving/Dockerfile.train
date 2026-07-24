@@ -3,10 +3,17 @@
 # unsloth/bitsandbytes는 이 조합에 프리빌트가 없어 미사용 → trl+peft bf16 LoRA 경로.
 FROM nvcr.io/nvidia/pytorch:26.03-py3
 
+# venv(system-site-packages)로 격리 — nvcr 베이스의 debian 관리 패키지(RECORD 없음) 업그레이드
+# 실패를 차단. 베이스의 torch/CUDA는 그대로 재사용(재설치 금지), 신규·업그레이드는 venv에만.
+RUN python -m venv --system-site-packages /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 # 학습 의존성 (torch는 베이스 이미지 것 사용 — 재설치 금지)
-RUN pip install --no-cache-dir \
-    "transformers>=4.46,<4.57" "trl>=0.19,<0.24" "peft>=0.13" \
-    "datasets>=3.0" "accelerate>=1.0" "optuna>=3.6" \
+# transformers 5.9+ : HyperCLOVA X SEED-Think(hyperclovax 아키텍처) 네이티브 지원. trl 1.x/peft 0.19가 이에 대응.
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir \
+    "transformers>=5.9,<6" "trl>=1.7,<2" "peft>=0.17" \
+    "datasets>=3.0" "accelerate>=1.2" "optuna>=3.6" \
     "pydantic>=2.6" "pydantic-settings>=2.2" "boto3>=1.34"
 
 WORKDIR /app

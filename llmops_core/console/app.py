@@ -23,6 +23,7 @@ from llmops_core.common.config import get_settings
 logger = logging.getLogger(__name__)
 
 from llmops_core.console.routers import (
+    aireg,
     audit,
     auth,
     benchmark,
@@ -97,6 +98,7 @@ app.include_router(tracking.router)
 app.include_router(storage.router)
 app.include_router(traces.router)
 app.include_router(benchmark.router)
+app.include_router(aireg.router)
 
 
 @app.get("/api/health")

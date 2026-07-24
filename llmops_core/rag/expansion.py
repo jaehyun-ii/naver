@@ -40,23 +40,48 @@ def expand_context(
     siblings 는 같은 조(parent_chunk_id 동일)의 child 들(순서 무관 — chunk_order로 정렬).
     """
     # 1) 조 전체 — 예산 안이면 그대로 (기본 경로)
-    if parent is not None:
-        ptext = _content(parent)
-        if ptext and len(ptext) <= budget_chars:
-            return ptext, "article"
+    ptext = _content(parent) if parent is not None else ""
+    if ptext and len(ptext) <= budget_chars:
+        return ptext, "article"
+    # 1b) 표 병합으로 조가 예산을 넘긴 경우 — 본문이 예산 안이면 표만 잘라 동반.
+    #     (표 값은 Qdrant payload에 없어 하강 재조립로는 복구 불가 — 여기서 지켜야 한다)
+    body, tables = _split_tables(ptext)
+    if body and len(body) <= budget_chars:
+        return _with_tables(body, tables, budget_chars), "article"
 
-    # 2) 항 → 3) 호 단위로 하강
+    # 2) 항 → 3) 호 단위로 하강 — 남는 예산에 표를 동반
     lmeta = _meta(leaf)
     for level, keys in _LEVEL_KEYS:
         text = _assemble(leaf, siblings, keys)
         if text and len(text) <= budget_chars:
-            return text, level
+            return _with_tables(text, tables, budget_chars), level
         # leaf 에 해당 키가 없으면(무번호 도입부 등) 더 내려가도 같음 → 중단
         if not lmeta.get(keys[-1]):
             break
 
     # 4) leaf 단독 (content 가 이미 경로+항 lead 로 문맥화돼 있음)
     return _content(leaf), "leaf"
+
+
+_TABLE_MARK = "\n\n[인용된 표]\n"
+
+
+def _split_tables(text: str) -> tuple[str, str]:
+    """parent content를 (본문, 표 블록)으로 분리 — 사이드카가 병합한 표 섹션 기준."""
+    if _TABLE_MARK not in (text or ""):
+        return text or "", ""
+    body, tables = text.split(_TABLE_MARK, 1)
+    return body.rstrip(), tables
+
+
+def _with_tables(text: str, tables: str, budget_chars: int) -> str:
+    """남는 예산에 표 블록을 동반 — 200자 미만이면 무의미해 생략."""
+    room = budget_chars - len(text) - len(_TABLE_MARK)
+    if not tables or room < 200:
+        return text
+    if len(tables) > room:
+        tables = tables[:room].rstrip() + "\n(표 일부 생략 — 분량 제한)"
+    return text + _TABLE_MARK + tables
 
 
 def _assemble(leaf: Any, siblings: list[Any], keys: tuple[str, ...]) -> str:

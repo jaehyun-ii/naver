@@ -3,8 +3,13 @@ import {
   TableCell, TableHead, TableRow, Typography, IconButton, Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import MemoryOutlined from "@mui/icons-material/Memory";
+import CloudQueueOutlined from "@mui/icons-material/CloudQueueOutlined";
+import ModelTrainingOutlined from "@mui/icons-material/ModelTraining";
+import PublicOutlined from "@mui/icons-material/PublicOutlined";
 import { PageHeader } from "../components/PageHeader";
-import { MetricCard } from "../components/MetricCard";
+import { SummaryTiles } from "../components/SummaryTiles";
+import { Gauge } from "../components/Charts";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
 import { useApi } from "../hooks/useApi";
 
@@ -49,16 +54,12 @@ export default function Dashboard() {
 
       {infra.error && <ErrorView message={infra.error} />}
 
-      <Stack direction="row" spacing={2} sx={{ mb: 3, flexWrap: "wrap", gap: 2 }}>
-        <MetricCard label="GPU" value={gpus.length} hint="검출된 장치 수" />
-        <MetricCard label="서비스" value={services.length} hint="Docker 서비스 수" />
-        <MetricCard label="등록 모델" value={models.data?.models?.length ?? "—"} />
-        <MetricCard
-          label="환경"
-          value={infra.data?.env?.env ?? "—"}
-          hint={infra.data?.env?.domain}
-        />
-      </Stack>
+      <SummaryTiles stats={[
+        { label: "GPU", value: gpus.length, hint: "검출된 장치", icon: MemoryOutlined, accent: "warning.main" },
+        { label: "서비스", value: services.length, hint: "Docker 서비스", icon: CloudQueueOutlined },
+        { label: "등록 모델", value: models.data?.models?.length ?? "—", hint: "게이트웨이", icon: ModelTrainingOutlined, accent: "success.main" },
+        { label: "환경", value: infra.data?.env?.env ?? "—", hint: infra.data?.env?.domain, icon: PublicOutlined },
+      ]} />
 
       <Card sx={{ mb: 3 }}>
         <CardContent>
@@ -68,22 +69,26 @@ export default function Dashboard() {
           ) : gpus.length === 0 ? (
             <EmptyView message="검출된 GPU가 없습니다 (nvidia-smi 사용 불가일 수 있음)." />
           ) : (
-            <Stack spacing={2}>
+            <Stack spacing={2.5}>
               {gpus.map((g, i) => {
                 const memPct = g.mem_total_mb ? Math.round((g.mem_used_mb / g.mem_total_mb) * 100) : 0;
                 return (
-                  <Box key={i}>
-                    <Box sx={{ display: "flex", justifyContent: "space-between", mb: 0.5 }}>
-                      <Typography variant="body2" fontWeight={600}>{g.name}</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        util {g.util_pct}% · {g.temp_c}°C · {g.mem_used_mb}/{g.mem_total_mb} MB
-                      </Typography>
+                  <Box key={i} sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <Gauge value={g.util_pct} label="util" />
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Box sx={{ display: "flex", justifyContent: "space-between", mb: 0.5 }}>
+                        <Typography variant="body2" fontWeight={600} noWrap>{g.name}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {g.temp_c}°C · {g.mem_used_mb}/{g.mem_total_mb} MB
+                        </Typography>
+                      </Box>
+                      <Typography variant="caption" color="text.secondary">메모리 {memPct}%</Typography>
+                      <LinearProgress
+                        variant="determinate" value={Math.min(memPct, 100)}
+                        color={memPct > 90 ? "error" : memPct > 70 ? "warning" : "primary"}
+                        sx={{ height: 6, borderRadius: 2, mt: 0.25 }}
+                      />
                     </Box>
-                    <LinearProgress
-                      variant="determinate"
-                      value={Math.min(memPct, 100)}
-                      color={memPct > 90 ? "error" : memPct > 70 ? "warning" : "primary"}
-                    />
                   </Box>
                 );
               })}

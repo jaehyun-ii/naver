@@ -41,7 +41,7 @@ import json
 import re
 from pathlib import Path
 
-from ._hierarchy import resolve_units, para_of_default
+from ._hierarchy import interleave_children, merge_figure_fragments, resolve_units, para_of_default
 from ._tables import row_retrieval, table_rows
 
 
@@ -227,10 +227,10 @@ class Chunker:
             if typ in ("header", "footer", "page_number", "page_footnote"):
                 continue
             if typ == "table":
-                st["tables"].append(x)
+                st["tables"].append((x, len(st["pieces"])))
                 continue
             if typ == "image":
-                st["figures"].append(x)
+                st["figures"].append((x, len(st["pieces"])))
                 continue
             if typ == "equation":                 # 수식은 직전 문단에 병합(단독이면 새 조각)
                 eq = (x.get("text") or "").strip()
@@ -312,7 +312,8 @@ class Chunker:
         chap_no, chap_title = st["chap"]
         sec_no, sec_title = st["sec"]
         art_no, art_title = st["art"]
-        pieces, tables, figures = st["pieces"], st["tables"], st["figures"]
+        pieces, tables = st["pieces"], st["tables"]
+        figures = merge_figure_fragments(st["figures"])   # 조각난 복합 그림 병합
         if not (pieces or tables or figures):
             return
 
@@ -329,8 +330,8 @@ class Chunker:
             path.append(f"{art_no} {art_title}".strip())
 
         pages = sorted({p for pc in pieces for p in pc["pages"]}
-                       | {t.get("page_idx") for t in tables}
-                       | {f.get("page_idx") for f in figures})
+                       | {t.get("page_idx") for t, _ in tables}
+                       | {f.get("page_idx") for f, _ in figures})
         full_text = "\n".join(pc["text"] for pc in pieces)
         is_def = "definition" in art_title.lower()
 
@@ -355,6 +356,7 @@ class Chunker:
             cid = f"{parent_id}_C{k:03d}"
             child_ids.append(cid)
             rec = meta(
+                pages=sorted(unit["pages"]) if unit.get("pages") else pages,  # 유닛 실제 페이지
                 chunk_id=cid, parent_chunk_id=parent_id,
                 chunk_level="child", chunk_type="text",
                 local_heading=unit.get("heading", ""),
@@ -380,7 +382,7 @@ class Chunker:
             b["previous_chunk_id"] = a["chunk_id"]
 
         table_chunks = []
-        for k, tb in enumerate(tables, 1):
+        for k, (tb, _ta) in enumerate(tables, 1):
             tid = f"{parent_id}_T{k:03d}"
             table_ids.append(tid)
             cap = " ".join(tb.get("table_caption") or [])
@@ -419,7 +421,7 @@ class Chunker:
                     ))
 
         figure_chunks = []
-        for k, fg in enumerate(figures, 1):
+        for k, (fg, _fa) in enumerate(figures, 1):
             fid = f"{parent_id}_F{k:03d}"
             figure_ids.append(fid)
             cap = " ".join(fg.get("image_caption") or [])
@@ -429,7 +431,9 @@ class Chunker:
                 chunk_id=fid, parent_chunk_id=parent_id,
                 chunk_level="child", chunk_type="figure",
                 caption=cap, image_path=fg.get("img_path", ""),
-                visual_summary=vis, content=cap,
+                image_paths=fg.get("img_paths") or ([fg["img_path"]] if fg.get("img_path") else []),
+                visual_summary=vis, image_kind=fg.get("sub_type") or "",
+                content=cap,
                 retrieval_text=" ".join(t for t in (cap, art_title, vis) if t),
                 references=atom_refs(" ".join((cap, vis)), cap),
                 linked_article_id=parent_id,
@@ -444,10 +448,19 @@ class Chunker:
             linked_tables=table_ids, linked_figures=figure_ids,
             linked_rule_chunk_id=None, linked_guidance_chunk_id=None,
         )
+        # 텍스트 자식과 그림·표 원자를 원문 등장 위치대로 병합 방출(ID 체계는 종류별 유지)
+        _grps: list[list[dict]] = []
+        for _c in table_chunks:
+            if _c["chunk_type"] == "table":
+                _grps.append([_c])
+            else:
+                _grps[-1].append(_c)
+        _atom_groups = list(zip([a for _, a in tables], _grps)) \
+            + list(zip([a for _, a in figures], [[c] for c in figure_chunks]))
         self.out.append(parent)
-        self.out.extend(child_chunks)
-        self.out.extend(table_chunks)
-        self.out.extend(figure_chunks)
+        self.out.extend(interleave_children(
+            [(u.get("src_idx", 0), c) for u, c in zip(child_units, child_chunks)],
+            _atom_groups))
 
     @staticmethod
     def _split_children(pieces: list[dict], is_def: bool) -> list[dict]:
@@ -457,15 +470,17 @@ class Chunker:
         # 정의: 각 정의 항목이 개별 유닛
         units: list[dict] = []
         cur: dict | None = None
-        for pc in pieces:
+        for _si, pc in enumerate(pieces):
             t = pc["text"]
             if cur is None or parse_definition(t)[0]:
                 if cur:
                     units.append(cur)
                 cur = {"text": t, "heading": "", "para_no": "",
-                       "para_title": "", "item_no": ""}
+                       "para_title": "", "item_no": "",
+                       "pages": set(pc.get("pages") or ()), "src_idx": _si}
             else:
                 cur["text"] += "\n" + t
+                cur["pages"] |= set(pc.get("pages") or ())
         if cur:
             units.append(cur)
         return units or [{"text": "", "heading": "", "para_no": "",
