@@ -3,6 +3,7 @@ import {
   Box, Button, Card, CardContent, Chip, Divider, Stack, Table, TableBody,
   TableCell, TableHead, TableRow, TextField, Typography, IconButton, Tooltip,
 } from "@mui/material";
+import { Link as RouterLink } from "react-router-dom";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import MenuBookOutlined from "@mui/icons-material/MenuBookOutlined";
 import LayersOutlined from "@mui/icons-material/LayersOutlined";
@@ -53,6 +54,30 @@ interface AugmentResult {
   used: AugmentUsed[];
 }
 
+interface RagCollection {
+  name: string;
+  points: number;
+  dim: number | null;
+  active: boolean;
+}
+
+interface CollectionsInfo {
+  serving: {
+    backend: string; collection: string; embedder: string; embedding_model: string;
+    query_prompt: string | null; reranker_model: string | null; top_k: number;
+  };
+  collections: RagCollection[];
+  error?: string;
+}
+
+interface ChunkDoc {
+  idx: number; title: string; family: string; n_chunks: number; n_articles: number;
+}
+
+interface ChunkSoc {
+  soc: string; label: string; docs: ChunkDoc[];
+}
+
 const SAMPLE_DOCS = `선급증서 유효기간이 지나면 즉시 선급기관에 재검사를 신청해 갱신한다.
 FAT 불합격 시 부적합 항목을 시정조치 요구서로 발행하고 재시험한다.
 도크 진수 전 선급기관 입회 검사를 통과해야 한다.`;
@@ -61,6 +86,116 @@ const SAMPLE_QUERY = "선급증서 만료되면 어떻게 해?";
 
 function errMsg(e: unknown): string {
   return e instanceof ApiError ? `${e.message} (HTTP ${e.status})` : (e as Error).message;
+}
+
+/** 벡터 DB 인덱싱 현황 — Qdrant 컬렉션 목록과 현재 서빙 검색 스택. */
+function IndexingPanel() {
+  const { data, loading, error } = useApi<CollectionsInfo>("/api/rag/collections");
+  if (loading && !data) return <Loading />;
+  if (error) return <ErrorView message={error} />;
+  if (!data) return null;
+  const s = data.serving;
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Typography variant="h3" gutterBottom>벡터 DB 인덱싱</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          청킹된 조 단위 문서가 임베딩되어 Qdrant 컬렉션에 적재됩니다. 서빙 검색은 아래 활성 컬렉션을 사용합니다.
+        </Typography>
+        <Stack direction="row" spacing={1} sx={{ mb: 2, flexWrap: "wrap", gap: 1 }}>
+          <Chip size="small" color="primary" label={`임베더: ${s.embedding_model}`} />
+          {s.query_prompt && <Chip size="small" variant="outlined" label={`질의 프롬프트: ${s.query_prompt}`} />}
+          {s.reranker_model && <Chip size="small" color="secondary" label={`리랭커: ${s.reranker_model}`} />}
+          <Chip size="small" variant="outlined" label={`백엔드: ${s.backend}`} />
+          <Chip size="small" variant="outlined" label={`top_k: ${s.top_k}`} />
+        </Stack>
+        {data.error ? (
+          <Typography variant="body2" color="text.secondary">
+            Qdrant 미가용: {data.error}
+          </Typography>
+        ) : data.collections.length === 0 ? (
+          <EmptyView message="Qdrant 컬렉션이 없습니다." />
+        ) : (
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>컬렉션</TableCell>
+                <TableCell align="right">포인트(벡터)</TableCell>
+                <TableCell align="right">차원</TableCell>
+                <TableCell>상태</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {data.collections.map((c) => (
+                <TableRow key={c.name} selected={c.active}>
+                  <TableCell sx={{ fontFamily: "ui-monospace, monospace", fontSize: 12 }}>{c.name}</TableCell>
+                  <TableCell align="right">{c.points.toLocaleString()}</TableCell>
+                  <TableCell align="right">{c.dim ?? "-"}</TableCell>
+                  <TableCell>
+                    {c.active && <Chip size="small" color="success" label="서빙 활성" />}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** 청킹 현황 — 선급별 문서·조·청크 수(리뷰 DB). 상세는 청킹 리뷰 페이지로. */
+function ChunkingPanel() {
+  const { data, loading, error } = useApi<ChunkSoc[]>("/api/review/docs");
+  if (loading && !data) return <Loading />;
+  if (error) {
+    return (
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h3" gutterBottom>청킹 현황</Typography>
+          <Typography variant="body2" color="text.secondary">{error}</Typography>
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!data) return null;
+  const totals = data.flatMap((s) => s.docs).reduce(
+    (a, d) => ({ chunks: a.chunks + d.n_chunks, articles: a.articles + d.n_articles, docs: a.docs + 1 }),
+    { chunks: 0, articles: 0, docs: 0 });
+  return (
+    <Card sx={{ mb: 3 }}>
+      <CardContent>
+        <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+          <Typography variant="h3">청킹 현황</Typography>
+          <Button size="small" component={RouterLink} to="/review">청킹 리뷰로</Button>
+        </Stack>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          원본 PDF → MinerU 추출 → 도메인 청커(조/항/호 구조 보존) → 인덱싱. 문서 {totals.docs}건 ·
+          조 단위 {totals.articles.toLocaleString()}건 · 청크 {totals.chunks.toLocaleString()}건.
+        </Typography>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>선급</TableCell>
+              <TableCell>문서</TableCell>
+              <TableCell align="right">조(article)</TableCell>
+              <TableCell align="right">청크</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {data.map((s) => s.docs.map((d, i) => (
+              <TableRow key={`${s.soc}-${d.idx}`}>
+                <TableCell>{i === 0 ? `${s.label} (${s.soc})` : ""}</TableCell>
+                <TableCell>{d.title}</TableCell>
+                <TableCell align="right">{d.n_articles.toLocaleString()}</TableCell>
+                <TableCell align="right">{d.n_chunks.toLocaleString()}</TableCell>
+              </TableRow>
+            )))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
+  );
 }
 
 function IngestPanel({ onIngested }: { onIngested: () => void }) {
@@ -240,7 +375,7 @@ export default function Rag() {
     <>
       <PageHeader
         title="RAG 지식베이스"
-        subtitle="문서를 색인하고 질의로 검색·증강 — 서빙·평가가 같은 경로로 컨텍스트를 주입"
+        subtitle="문서 청킹 → 벡터 DB 인덱싱 → 검색·증강 — 서빙·평가가 같은 경로로 컨텍스트를 주입"
         action={
           <Tooltip title="새로고침">
             <IconButton onClick={() => reload()} aria-label="새로고침"><RefreshIcon /></IconButton>
@@ -260,6 +395,8 @@ export default function Rag() {
 
       {loading && !data && <Loading />}
 
+      <ChunkingPanel />
+      <IndexingPanel />
       <IngestPanel onIngested={() => reload()} />
       <RetrievePanel />
     </>

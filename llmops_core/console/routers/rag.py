@@ -48,6 +48,45 @@ def stats() -> dict:
     return _rag().stats()
 
 
+@router.get("/collections")
+def collections() -> dict:
+    """벡터 DB(Qdrant) 컬렉션 인덱싱 현황 + 현재 서빙 검색 스택 설정.
+
+    Qdrant 미가용이면 컬렉션 목록 대신 error를 담아 200으로 응답한다
+    (지식베이스 화면이 dev(인메모리) 환경에서도 그대로 뜨도록).
+    """
+    from llmops_core.common.config import get_settings
+
+    cfg = get_settings().rag
+    out: dict = {
+        "serving": {
+            "backend": cfg.backend, "collection": cfg.collection,
+            "embedder": cfg.embedder, "embedding_model": cfg.embedding_model,
+            "query_prompt": cfg.query_prompt, "reranker_model": cfg.reranker_model,
+            "top_k": cfg.top_k,
+        },
+        "collections": [],
+    }
+    try:
+        from llmops_core.rag.retriever import qdrant_client
+
+        cl = qdrant_client()
+        for c in cl.get_collections().collections:
+            info = cl.get_collection(c.name)
+            vec = info.config.params.vectors
+            dim = getattr(vec, "size", None)
+            if dim is None and isinstance(vec, dict) and vec:
+                dim = next(iter(vec.values())).size
+            out["collections"].append({
+                "name": c.name, "points": int(info.points_count or 0),
+                "dim": dim, "active": c.name == cfg.collection,
+            })
+        out["collections"].sort(key=lambda x: (-x["active"], -x["points"]))
+    except Exception as exc:  # noqa: BLE001 — 미가용 사유를 그대로 노출
+        out["error"] = str(exc)
+    return out
+
+
 @router.post("/ingest")
 def ingest(
     body: IngestBody, principal: Principal = Depends(require_perm("data:write")),

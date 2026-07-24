@@ -1,7 +1,8 @@
 import { useState } from "react";
 import {
-  Alert, Box, Button, Card, CardContent, Chip, Collapse, Stack, Table, TableBody,
-  TableCell, TableHead, TableRow, TextField, Typography, IconButton, Tooltip,
+  Alert, Box, Button, Card, CardContent, Chip, Collapse, FormControlLabel,
+  MenuItem, Stack, Switch, Tab, Table, TableBody,
+  TableCell, TableHead, TableRow, Tabs, TextField, Typography, IconButton, Tooltip,
 } from "@mui/material";
 import { Link as RouterLink } from "react-router-dom";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -17,6 +18,7 @@ import { SummaryTiles } from "../components/SummaryTiles";
 import { Histogram } from "../components/Charts";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
+import { AiregOverviewSection, AiregQaSection, useAiregSuite } from "../components/AiregData";
 
 interface DatasetManifest {
   name: string;
@@ -204,14 +206,39 @@ function DatasetRow({ d }: { d: DatasetManifest }) {
   );
 }
 
+/** AIReg 생성 데이터셋 탭 — 스위트 생성 현황·QA 검수 뷰(생성·관리). */
+function AiregDatasetTab() {
+  const { suite, setSuite, suites } = useAiregSuite();
+  const [live, setLive] = useState(true);
+  return (
+    <Stack spacing={2}>
+      <Stack direction="row" spacing={2} alignItems="center">
+        <TextField select size="small" label="스위트" value={suite}
+          onChange={(e) => setSuite(e.target.value)} sx={{ width: 160 }}>
+          {suites.map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+        </TextField>
+        <FormControlLabel control={
+          <Switch checked={live} onChange={(e) => setLive(e.target.checked)} size="small" />
+        } label="실시간" />
+        <Typography variant="caption" color="text.secondary">
+          생성(8트랙) → 정적 게이트 → 블라인드 검증 → ACCEPT만 SFT 분할(train/val)
+        </Typography>
+      </Stack>
+      <AiregOverviewSection suite={suite} live={live} />
+      <AiregQaSection suite={suite} live={live} />
+    </Stack>
+  );
+}
+
 export default function Datasets() {
   const { data, loading, error, reload } = useApi<DatasetManifest[]>("/api/data/datasets");
+  const [tab, setTab] = useState(0);
 
   return (
     <>
       <PageHeader
         title="데이터셋"
-        subtitle="버전 고정된 학습 데이터셋 목록과 품질 검증"
+        subtitle="버전 고정 학습 데이터셋과 AIReg 벤치 데이터셋 생성·관리"
         action={
           <Stack direction="row" spacing={1} alignItems="center">
             <Button variant="outlined" size="small" component={RouterLink} to="/pipe" startIcon={<ModelTrainingOutlined />}>
@@ -223,6 +250,14 @@ export default function Datasets() {
           </Stack>
         }
       />
+
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
+        <Tab label="학습 데이터셋" />
+        <Tab label="AIReg 생성·관리" />
+      </Tabs>
+
+      {tab === 1 && <AiregDatasetTab />}
+      {tab === 0 && (<>
 
       {(data?.length ?? 0) > 0 && (
         <SummaryTiles stats={[
@@ -290,6 +325,7 @@ export default function Datasets() {
       </Card>
 
       <ValidatePanel />
+      </>)}
     </>
   );
 }
