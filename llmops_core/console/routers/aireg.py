@@ -7,6 +7,7 @@ append되므로 offset 폴링으로 라이브 테일이 된다.
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -19,8 +20,10 @@ router = APIRouter(prefix="/api/aireg", tags=["aireg"],
 
 # 컨테이너에선 코드가 /app 아래 마운트되고 레포는 호스트 경로 그대로 마운트됨
 # — 존재하는 후보를 선택 (review.py와 동일 관례).
-_CANDIDATES = [Path(__file__).resolve().parents[3] / "data_aireg",
-               Path("/home/jaehyun/Dev/naver/data_aireg")]
+_CANDIDATES = ([Path(os.environ["AIREG_DATA_DIR"])] if os.environ.get("AIREG_DATA_DIR") else []) + [
+    Path(__file__).resolve().parents[3] / "data_aireg",
+    Path("/home/jaehyun/Dev/naver/data_aireg"),
+    Path("/raid/workspace/jaehyun/naver/data_aireg")]
 DATA = next((p for p in _CANDIDATES if p.is_dir()), _CANDIDATES[0])
 TRACK_FILES = ["spec_qa.jsonl", "applicability_qa.jsonl", "crossref_qa.jsonl",
                "def_link_qa.jsonl", "precedence_qa.jsonl", "unit_convert_qa.jsonl",
