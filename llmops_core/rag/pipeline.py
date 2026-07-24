@@ -124,40 +124,96 @@ class RagPipeline:
         except Exception:  # noqa: BLE001  # pragma: no cover
             return hits
 
-    def build_context(self, hits: list[Hit]) -> str:
+    def build_context(self, hits: list[Hit], query: str | None = None) -> str:
         """학습 데이터(RAFT)와 동일한 문서 블록 — "[문서 i] 계층경로\\n본문".
 
         전체 문자 예산(context_budget_chars)을 균등 할당 + 잉여 재분배로 배분한다:
         모든 top-k 문서에 예산/k를 보장(거대 상위 문서가 하위 golden을 밀어내는
         것을 방지)하고, 짧은 문서가 남긴 예산은 순위순으로 긴 문서에 재분배한다.
+        예산 초과 문서는 무지성 머리 절단 대신 쿼리 인지 절단(_trim_relevant)으로
+        질문과 관련된 문단을 남긴다(조 뒷부분에 있는 관련 항 보존).
         """
         if not hits:
             return ""
         budget = get_settings().rag.context_budget_chars
-        raw: list[str] = []
+        heads: list[str] = []
+        bodies: list[str] = []
         for i, h in enumerate(hits, 1):
             meta = getattr(h.document, "metadata", None) or {}
             path = meta.get("section_path") or ""
             if isinstance(path, list):
                 path = " > ".join(path)
-            head = f"[문서 {i}]" + (f" {path}" if path else "")
-            raw.append(f"{head}\n{h.document.text}")
-        base = budget // len(raw)
-        alloc = [min(len(b), base) for b in raw]
+            heads.append(f"[문서 {i}]" + (f" {path}" if path else ""))
+            bodies.append(h.document.text)
+        lens = [len(h) + 1 + len(b) for h, b in zip(heads, bodies)]
+        base = budget // len(bodies)
+        alloc = [min(ln, base) for ln in lens]
         leftover = budget - sum(alloc)
-        for i, b in enumerate(raw):  # 잉여는 순위순으로 재분배
+        for i, ln in enumerate(lens):  # 잉여는 순위순으로 재분배
             if leftover <= 0:
                 break
-            take = min(len(b) - alloc[i], leftover)
+            take = min(ln - alloc[i], leftover)
             alloc[i] += take
             leftover -= take
-        return "\n\n".join(b[:a] for b, a in zip(raw, alloc))
+        blocks = []
+        for head, body, a in zip(heads, bodies, alloc):
+            body_limit = max(0, a - len(head) - 1)
+            blocks.append(f"{head}\n{self._trim_relevant(query, body, body_limit)}")
+        return "\n\n".join(blocks)
+
+    def _trim_relevant(self, query: str | None, text: str, limit: int) -> str:
+        """예산 초과 본문의 쿼리 인지 절단 — 문단 단위로 리랭커 채점 후 관련 문단만
+        원문 순서로 보존(생략 지점은 '…(중략)…'). 리랭커 미가용 시 머리 절단."""
+        if len(text) <= limit:
+            return text
+        if not query or not get_settings().rag.reranker_model or limit < 300:
+            return text[:limit]
+        units: list[str] = []
+        cur = ""
+        for line in text.split("\n"):  # ~600자 문단 묶음(개행 경계)
+            if cur and len(cur) + len(line) > 600:
+                units.append(cur)
+                cur = line
+            else:
+                cur = f"{cur}\n{line}" if cur else line
+        if cur:
+            units.append(cur)
+        try:
+            if not hasattr(self, "_reranker"):
+                from sentence_transformers import CrossEncoder
+
+                self._reranker = CrossEncoder(
+                    get_settings().rag.reranker_model, max_length=1024,
+                    trust_remote_code=True)
+            scores = self._reranker.predict(
+                [(query[:512], u[:1500]) for u in units], show_progress_bar=False)
+        except Exception:  # noqa: BLE001  # pragma: no cover — 가용성 우선
+            return text[:limit]
+        gap = "\n…(중략)…\n"
+        pick: set[int] = set()
+        used = 0
+        for i in sorted(range(len(units)), key=lambda i: -float(scores[i])):
+            cost = len(units[i]) + len(gap)
+            if used + cost > limit:
+                continue
+            pick.add(i)
+            used += cost
+        if not pick:
+            return text[:limit]
+        out: list[str] = []
+        prev = -2
+        for i in sorted(pick):
+            if prev >= 0 and i != prev + 1:
+                out.append("…(중략)…")
+            out.append(units[i])
+            prev = i
+        return "\n".join(out)
 
     def augment(self, query: str, *, k: int | None = None,
                 system_template: str | None = None) -> tuple[list[dict], list[Hit]]:
         """질의를 RAG 컨텍스트로 증강한 messages와 사용된 hits 반환."""
         hits = self.retrieve(query, k)
-        context = self.build_context(hits)
+        context = self.build_context(hits, query)
         if get_settings().rag.inject_mode == "user":
             return [{"role": "user",
                      "content": f"[검색된 규정 조항]\n{context}\n\n[질문]\n{query}"}], hits
@@ -180,7 +236,7 @@ class RagPipeline:
         if not query:
             return list(messages), []
         hits = self.retrieve(query, k)
-        context = self.build_context(hits)
+        context = self.build_context(hits, query)
         if not context:
             return list(messages), hits
         new = [dict(m) for m in messages]
