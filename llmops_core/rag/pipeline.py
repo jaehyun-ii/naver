@@ -127,32 +127,31 @@ class RagPipeline:
     def build_context(self, hits: list[Hit]) -> str:
         """학습 데이터(RAFT)와 동일한 문서 블록 — "[문서 i] 계층경로\\n본문".
 
-        전체 문자 예산(context_budget_chars) 내에서 상위 히트부터 채운다 —
-        긴 조 여러 개가 동시에 걸려 모델 윈도우를 넘는 꼬리 케이스 방지.
-        첫 문서는 예산을 넘어도 절단해서라도 포함한다(빈 컨텍스트 방지).
+        전체 문자 예산(context_budget_chars)을 균등 할당 + 잉여 재분배로 배분한다:
+        모든 top-k 문서에 예산/k를 보장(거대 상위 문서가 하위 golden을 밀어내는
+        것을 방지)하고, 짧은 문서가 남긴 예산은 순위순으로 긴 문서에 재분배한다.
         """
+        if not hits:
+            return ""
         budget = get_settings().rag.context_budget_chars
-        blocks: list[str] = []
-        used = 0
+        raw: list[str] = []
         for i, h in enumerate(hits, 1):
             meta = getattr(h.document, "metadata", None) or {}
             path = meta.get("section_path") or ""
             if isinstance(path, list):
                 path = " > ".join(path)
             head = f"[문서 {i}]" + (f" {path}" if path else "")
-            block = f"{head}\n{h.document.text}"
-            if blocks and used + len(block) > budget:
-                remain = budget - used
-                if remain < 500:  # 의미 없는 꼬리 조각은 버림
-                    break
-                block = block[:remain]
-            elif not blocks:
-                block = block[:budget]
-            blocks.append(block)
-            used += len(block)
-            if used >= budget:
+            raw.append(f"{head}\n{h.document.text}")
+        base = budget // len(raw)
+        alloc = [min(len(b), base) for b in raw]
+        leftover = budget - sum(alloc)
+        for i, b in enumerate(raw):  # 잉여는 순위순으로 재분배
+            if leftover <= 0:
                 break
-        return "\n\n".join(blocks)
+            take = min(len(b) - alloc[i], leftover)
+            alloc[i] += take
+            leftover -= take
+        return "\n\n".join(b[:a] for b, a in zip(raw, alloc))
 
     def augment(self, query: str, *, k: int | None = None,
                 system_template: str | None = None) -> tuple[list[dict], list[Hit]]:
