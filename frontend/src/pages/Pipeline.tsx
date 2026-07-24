@@ -11,6 +11,7 @@ import HourglassEmptyIcon from "@mui/icons-material/HourglassEmpty";
 import PauseCircleIcon from "@mui/icons-material/PauseCircle";
 import RadioButtonUncheckedIcon from "@mui/icons-material/RadioButtonUnchecked";
 import type { SvgIconComponent } from "@mui/icons-material";
+import { AiregTrainLogSection } from "../components/AiregSections";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
 import { useApi } from "../hooks/useApi";
@@ -627,6 +628,10 @@ export default function Pipeline() {
           </CardContent>
         </Card>
       )}
+
+      <Box sx={{ mt: 3 }}>
+        <AiregTrainLogSection />
+      </Box>
     </>
   );
 }

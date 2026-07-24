@@ -8,6 +8,7 @@ import AssessmentOutlined from "@mui/icons-material/AssessmentOutlined";
 import LayersOutlined from "@mui/icons-material/LayersOutlined";
 import EmojiEventsOutlined from "@mui/icons-material/EmojiEventsOutlined";
 import ScienceOutlined from "@mui/icons-material/ScienceOutlined";
+import { AiregGenEvalSection } from "../components/AiregSections";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView } from "../components/StateViews";
 import { BarChart, LineChart, type BarDatum } from "../components/Charts";
@@ -172,6 +173,9 @@ export default function EvalVersions() {
           </Stack>
         </>
       )}
+
+      <Typography variant="h3" sx={{ mt: 4, mb: 1 }}>AIReg 실생성 평가 (튜닝 vs 베이스 · LLM judge)</Typography>
+      <AiregGenEvalSection />
     </>
   );
 }

@@ -9,6 +9,7 @@ import TuneOutlined from "@mui/icons-material/TuneOutlined";
 import CheckCircleOutline from "@mui/icons-material/CheckCircleOutline";
 import EmojiEventsOutlined from "@mui/icons-material/EmojiEventsOutlined";
 import AccountTreeOutlined from "@mui/icons-material/AccountTreeOutlined";
+import { AiregExperimentsSection } from "../components/AiregSections";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
 import { SummaryTiles } from "../components/SummaryTiles";
@@ -359,6 +360,10 @@ export default function Hpo() {
       </Card>
 
       {selected && <StudyDetail hpoId={selected} />}
+
+      <Box sx={{ mt: 3 }}>
+        <AiregExperimentsSection />
+      </Box>
     </>
   );
 }

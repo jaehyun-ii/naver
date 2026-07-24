@@ -11,6 +11,7 @@ import SearchOutlined from "@mui/icons-material/Search";
 import { PageHeader } from "../components/PageHeader";
 import { Loading, ErrorView, EmptyView } from "../components/StateViews";
 import { SummaryTiles } from "../components/SummaryTiles";
+import { AiregRetrievalSection } from "../components/AiregSections";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 
@@ -397,6 +398,7 @@ export default function Rag() {
 
       <ChunkingPanel />
       <IndexingPanel />
+      <AiregRetrievalSection />
       <IngestPanel onIngested={() => reload()} />
       <RetrievePanel />
     </>

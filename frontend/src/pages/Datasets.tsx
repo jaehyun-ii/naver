@@ -19,6 +19,7 @@ import { Histogram } from "../components/Charts";
 import { useApi } from "../hooks/useApi";
 import { api, ApiError } from "../api";
 import { AiregOverviewSection, AiregQaSection, useAiregSuite } from "../components/AiregData";
+import { AiregBatchLogSection } from "../components/AiregSections";
 
 interface DatasetManifest {
   name: string;
@@ -226,6 +227,7 @@ function AiregDatasetTab() {
       </Stack>
       <AiregOverviewSection suite={suite} live={live} />
       <AiregQaSection suite={suite} live={live} />
+      <AiregBatchLogSection suite={suite} live={live} />
     </Stack>
   );
 }

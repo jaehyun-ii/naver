@@ -1,15 +1,17 @@
+/** AIReg 학습·평가·검색 섹션 — HPO(실험)·학습 파이프라인(로그)·성능 비교(평가)·RAG(검색 벤치)
+ * 페이지에 각각 삽입되는 공용 컴포넌트. 데이터 소스는 /api/aireg/*. */
 import { useState } from "react";
 import {
-  Box, Card, CardContent, Chip, Collapse, FormControlLabel, IconButton,
-  MenuItem, Stack, Switch, Tab, Table, TableBody, TableCell, TableHead,
-  TableRow, Tabs, TextField, Typography,
+  Box, Card, CardContent, Chip, Collapse, IconButton, MenuItem, Stack,
+  Table, TableBody, TableCell, TableHead, TableRow, TextField, Typography,
 } from "@mui/material";
 import KeyboardArrowDown from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUp from "@mui/icons-material/KeyboardArrowUp";
-import { PageHeader } from "../components/PageHeader";
-import { Loading, ErrorView } from "../components/StateViews";
+import { Loading, ErrorView } from "./StateViews";
 import { useApi } from "../hooks/useApi";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
+
+const DEFAULT_SUITE = "suite_v5";
 
 interface GenRow {
   source: string; track: string; question: string; gold: string;
@@ -70,7 +72,8 @@ function GenRowView({ r }: { r: GenRow }) {
   );
 }
 
-function GenEvalTab({ suite, live }: { suite: string; live: boolean }) {
+/** 실생성 평가 뷰어 — 튜닝 vs 베이스 실답변·judge 채점 (성능 비교 페이지). */
+export function AiregGenEvalSection({ suite = DEFAULT_SUITE, live = true }: { suite?: string; live?: boolean }) {
   const [only, setOnly] = useState("all");
   const { data, loading, error, reload } = useApi<{ total: number; rows: GenRow[] }>(
     `/api/aireg/geneval?suite=${suite}&limit=40&only=${only}`, [suite, only]);
@@ -103,69 +106,60 @@ function GenEvalTab({ suite, live }: { suite: string; live: boolean }) {
   );
 }
 
-function LogsTab({ suite, live }: { suite: string; live: boolean }) {
-  const { data, loading, error, reload } = useApi<{ lines: string[] }>(
-    `/api/aireg/logs?suite=${suite}&name=batch&lines=120`, [suite]);
-  useAutoRefresh(reload, 5000, live);
-  if (loading && !data) return <Loading />;
-  if (error) return <ErrorView message={error} />;
-  return (
-    <Card><CardContent>
-      <Typography variant="subtitle2" gutterBottom>배치 로그 (batch.log)</Typography>
-      <Box component="pre" sx={{
-        m: 0, p: 1.5, bgcolor: "background.default", borderRadius: 1,
-        fontSize: 12, maxHeight: 520, overflow: "auto", whiteSpace: "pre-wrap",
-      }}>
-        {(data?.lines ?? []).join("\n") || "(로그 없음)"}
-      </Box>
-    </CardContent></Card>
-  );
-}
-
 interface TrainExp { name: string; config: string; val_loss: number | null; n: number | null }
 
-function TrainTab({ suite }: { suite: string }) {
+/** 32B LoRA 하이퍼파라미터 실험 결과 (HPO 페이지). */
+export function AiregExperimentsSection({ suite = DEFAULT_SUITE }: { suite?: string }) {
   const { data, loading, error } = useApi<{ experiments: TrainExp[]; logs: string }>(
     `/api/aireg/train?suite=${suite}`, [suite]);
   if (loading && !data) return <Loading />;
   if (error) return <ErrorView message={error} />;
   const best = data?.experiments.find((e) => e.name !== "base32b");
   return (
-    <Stack spacing={2}>
-      <Card><CardContent>
-        <Typography variant="subtitle2" gutterBottom>
-          학습 실험 (val_loss 오름차순 · 32B LoRA · val 200)
-          {best && <Chip size="small" color="success" sx={{ ml: 1 }} label={`최고: ${best.name} ${best.val_loss}`} />}
-        </Typography>
-        <Table size="small">
-          <TableHead><TableRow>
-            <TableCell>실험</TableCell><TableCell>설정</TableCell>
-            <TableCell align="right">val_loss</TableCell>
-          </TableRow></TableHead>
-          <TableBody>
-            {(data?.experiments ?? []).map((e) => (
-              <TableRow key={e.name} selected={e.name === "main800"}>
-                <TableCell>{e.name}</TableCell><TableCell>{e.config}</TableCell>
-                <TableCell align="right">{e.val_loss ?? "-"}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </CardContent></Card>
-      <Card><CardContent>
-        <Typography variant="subtitle2" gutterBottom>학습 실행 로그 (H100 동기화)</Typography>
-        <Box component="pre" sx={{ m: 0, p: 1.5, bgcolor: "background.default", borderRadius: 1,
-          fontSize: 12, maxHeight: 420, overflow: "auto", whiteSpace: "pre-wrap" }}>
-          {data?.logs || "(로그 없음)"}
-        </Box>
-      </CardContent></Card>
-    </Stack>
+    <Card><CardContent>
+      <Typography variant="subtitle2" gutterBottom>
+        AIReg 32B LoRA 실험 (val_loss 오름차순 · H100 · val 200)
+        {best && <Chip size="small" color="success" sx={{ ml: 1 }} label={`최고: ${best.name} ${best.val_loss}`} />}
+      </Typography>
+      <Table size="small">
+        <TableHead><TableRow>
+          <TableCell>실험</TableCell><TableCell>설정</TableCell>
+          <TableCell align="right">val_loss</TableCell>
+        </TableRow></TableHead>
+        <TableBody>
+          {(data?.experiments ?? []).map((e) => (
+            <TableRow key={e.name} selected={e.name === "main800"}>
+              <TableCell>{e.name}</TableCell><TableCell>{e.config}</TableCell>
+              <TableCell align="right">{e.val_loss ?? "-"}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </CardContent></Card>
+  );
+}
+
+/** 본 학습(main800) 실행 로그 (학습 파이프라인 페이지). */
+export function AiregTrainLogSection({ suite = DEFAULT_SUITE }: { suite?: string }) {
+  const { data, loading, error } = useApi<{ experiments: TrainExp[]; logs: string }>(
+    `/api/aireg/train?suite=${suite}`, [suite]);
+  if (loading && !data) return <Loading />;
+  if (error) return <ErrorView message={error} />;
+  return (
+    <Card><CardContent>
+      <Typography variant="subtitle2" gutterBottom>AIReg 32B 본 학습 로그 (H100 동기화)</Typography>
+      <Box component="pre" sx={{ m: 0, p: 1.5, bgcolor: "background.default", borderRadius: 1,
+        fontSize: 12, maxHeight: 420, overflow: "auto", whiteSpace: "pre-wrap" }}>
+        {data?.logs || "(로그 없음)"}
+      </Box>
+    </CardContent></Card>
   );
 }
 
 function pct(v?: number | null) { return v == null ? "-" : `${(v * 100).toFixed(1)}%`; }
 
-function RetrievalTab({ suite }: { suite: string }) {
+/** 검색(임베더·리랭커) 벤치 결과 (RAG 지식베이스 페이지). */
+export function AiregRetrievalSection({ suite = DEFAULT_SUITE }: { suite?: string }) {
   const { data, loading, error } = useApi<Record<string, any>>(`/api/aireg/retrieval?suite=${suite}`, [suite]);
   if (loading && !data) return <Loading />;
   if (error) return <ErrorView message={error} />;
@@ -179,9 +173,10 @@ function RetrievalTab({ suite }: { suite: string }) {
     }
   }
   return (
-    <Card><CardContent>
-      <Typography variant="subtitle2" gutterBottom>
-        검색 벤치 결과 (rm_*=앵커 포함 · na_*=무앵커 · emb_*=임베더 단독)
+    <Card sx={{ mb: 3 }}><CardContent>
+      <Typography variant="h3" gutterBottom>검색 벤치</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+        AIReg val 200 골든 근거 기준 임베더·리랭커 스택 비교 (rm_*=앵커 포함 · na_*=무앵커 · emb_*=임베더 단독)
       </Typography>
       <Table size="small">
         <TableHead><TableRow>
@@ -205,34 +200,22 @@ function RetrievalTab({ suite }: { suite: string }) {
   );
 }
 
-export default function Aireg() {
-  const [tab, setTab] = useState(0);
-  const [live, setLive] = useState(true);
-  const [suite, setSuite] = useState("suite_v5");
-  const { data: suitesData } = useApi<string[]>("/api/aireg/suites");
+/** 생성 배치 로그 (데이터셋 AIReg 생성·관리 탭). */
+export function AiregBatchLogSection({ suite = DEFAULT_SUITE, live = true }: { suite?: string; live?: boolean }) {
+  const { data, loading, error, reload } = useApi<{ lines: string[] }>(
+    `/api/aireg/logs?suite=${suite}&name=batch&lines=120`, [suite]);
+  useAutoRefresh(reload, 5000, live);
+  if (loading && !data) return <Loading />;
+  if (error) return <ErrorView message={error} />;
   return (
-    <Box>
-      <PageHeader title="AIReg 벤치·학습"
-        subtitle="선급 규정 QA 학습·평가·검색 벤치 실시간 뷰 — 데이터셋 생성·관리는 ‘데이터셋’ 페이지"
-        action={
-          <Stack direction="row" spacing={2} alignItems="center">
-            <TextField select size="small" label="스위트" value={suite}
-              onChange={(e) => setSuite(e.target.value)} sx={{ width: 160 }}>
-              {(suitesData ?? ["suite_v5"]).map((s) => <MenuItem key={s} value={s}>{s}</MenuItem>)}
-            </TextField>
-            <FormControlLabel control={
-              <Switch checked={live} onChange={(e) => setLive(e.target.checked)} size="small" />
-            } label="실시간" />
-          </Stack>
-        } />
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2 }}>
-        <Tab label="평가 뷰어" /><Tab label="학습 실험" />
-        <Tab label="검색 벤치" /><Tab label="로그" />
-      </Tabs>
-      {tab === 0 && <GenEvalTab suite={suite} live={live} />}
-      {tab === 1 && <TrainTab suite={suite} />}
-      {tab === 2 && <RetrievalTab suite={suite} />}
-      {tab === 3 && <LogsTab suite={suite} live={live} />}
-    </Box>
+    <Card><CardContent>
+      <Typography variant="subtitle2" gutterBottom>생성 배치 로그 (batch.log)</Typography>
+      <Box component="pre" sx={{
+        m: 0, p: 1.5, bgcolor: "background.default", borderRadius: 1,
+        fontSize: 12, maxHeight: 520, overflow: "auto", whiteSpace: "pre-wrap",
+      }}>
+        {(data?.lines ?? []).join("\n") || "(로그 없음)"}
+      </Box>
+    </CardContent></Card>
   );
 }
