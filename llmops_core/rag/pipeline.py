@@ -141,6 +141,9 @@ class RagPipeline:
         """질의를 RAG 컨텍스트로 증강한 messages와 사용된 hits 반환."""
         hits = self.retrieve(query, k)
         context = self.build_context(hits)
+        if get_settings().rag.inject_mode == "user":
+            return [{"role": "user",
+                     "content": f"[검색된 규정 조항]\n{context}\n\n[질문]\n{query}"}], hits
         system = (system_template or _DEFAULT_SYSTEM).format(context=context)
         messages = [
             {"role": "system", "content": system},
@@ -164,6 +167,14 @@ class RagPipeline:
         if not context:
             return list(messages), hits
         new = [dict(m) for m in messages]
+        if get_settings().rag.inject_mode == "user":
+            # RAFT 학습 형식 정합 — 마지막 user 메시지를 컨텍스트+[질문]으로 재구성.
+            # (HCX chat template은 system 미지원 → user 주입이 유일한 동작 경로이기도 함)
+            for m in reversed(new):
+                if m.get("role") == "user":
+                    m["content"] = (f"[검색된 규정 조항]\n{context}\n\n[질문]\n{query}")
+                    break
+            return new, hits
         sys_idx = next((i for i, m in enumerate(new) if m.get("role") == "system"), None)
         if sys_idx is None:
             new.insert(0, {"role": "system", "content": compose_system(None, context)})

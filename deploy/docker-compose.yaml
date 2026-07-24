@@ -99,6 +99,7 @@ services:
       LLMOPS_RAG__PARENT_DB: /home/jaehyun/Dev/naver/data_chunks_full/rag_parents.db
       LLMOPS_RAG__RERANKER_MODEL: nvidia/llama-nemotron-rerank-vl-1b-v2
       LLMOPS_RAG__TOP_K: "4"
+      LLMOPS_RAG__INJECT_MODE: user  # HCX 학습(RAFT) 형식 정합
       LLMOPS_MLFLOW__TRACKING_URI: http://mlflow:5000
       LLMOPS_TELEMETRY__BACKEND: otel
       LLMOPS_TELEMETRY__OTLP_ENDPOINT: http://otel-collector:4317
@@ -153,9 +154,10 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"] # 콘솔 챗도 in-process 라우터 사용
     # --reload: bind-mount된 llmops_core 코드 변경 시 콘솔 자동 재기동(개발 편의).
     # uvicorn[standard]의 watchfiles가 /app/llmops_core를 감시한다.
+    # python-multipart: 업로드 라우터 필수 — 구 이미지에 누락(이미지 재빌드 전 임시 심)
     command:
-      ["uvicorn", "llmops_core.console.app:app", "--host", "0.0.0.0", "--port", "4100",
-       "--reload", "--reload-dir", "/app/llmops_core"]
+      ["bash", "-c",
+       "pip install -q python-multipart && exec python -m uvicorn llmops_core.console.app:app --host 0.0.0.0 --port 4100 --reload --reload-dir /app/llmops_core"]
     ports: ["4100:4100"]
     deploy: # nvidia-smi 주입(대시보드 GPU 검출) — GB10 단일 GPU 공유
       resources:
