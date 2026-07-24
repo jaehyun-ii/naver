@@ -93,12 +93,20 @@ class RagSettings(BaseModel):
     backend=memory(코사인·디스크영속) | qdrant(QdrantSettings 사용).
     """
 
-    embedder: str = "hashing"  # "bge-m3" | "hashing"
+    embedder: str = "hashing"  # "bge-m3" | "st"(임의 ST 모델) | "hashing"
     embedding_model: str = "BAAI/bge-m3"
     dim: int = 256  # hashing 임베더 차원(bge-m3는 모델 차원 사용)
-    backend: str = "memory"  # "memory" | "qdrant"
+    backend: str = "memory"  # "memory" | "qdrant" | "qdrant_parents"
     collection: str = "default"
     top_k: int = 4
+    # ── parent-직접 검색 스택(Nemotron 벤치 채택안) ──
+    # query_prompt: 비대칭 임베더의 질의측 프롬프트명(예: nemotron "query")
+    # parent_db: parent 본문 사이드카(sqlite) — qdrant_parents 백엔드가 하이드레이션
+    # reranker_model: cross-encoder 리랭커(미설정 시 리랭크 생략)
+    query_prompt: str | None = None
+    parent_db: str | None = None
+    reranker_model: str | None = None
+    rerank_candidates: int = 20
     persist_path: str | None = "./rag_store"  # memory 백엔드 디스크 영속(없으면 휘발)
     # 서빙 시점 자동 RAG — 게이트웨이가 요청을 검색·컨텍스트 주입 후 모델 호출.
     # 기본 off(요청별 extra.rag로 override). 켜면 평가(--rag)와 서빙이 동일 경로로 정합.

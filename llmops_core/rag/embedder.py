@@ -48,24 +48,33 @@ class HashingEmbedder:
 
 
 class SentenceTransformerEmbedder:
-    """bge-m3 등 sentence-transformers 모델 임베더(lazy). 정규화 임베딩 반환."""
+    """sentence-transformers 모델 임베더(lazy). 정규화 임베딩 반환.
 
-    def __init__(self, model_name: str = "BAAI/bge-m3") -> None:
+    query_prompt: 비대칭 모델(nemotron 등)의 질의측 프롬프트명 — 서빙 임베더는
+    질의만 인코딩하므로 질의 프롬프트만 적용한다(문서측은 오프라인 인덱서 몫).
+    """
+
+    def __init__(self, model_name: str = "BAAI/bge-m3",
+                 query_prompt: str | None = None) -> None:
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:  # pragma: no cover
             raise OptionalDependencyError("sentence-transformers", "rag") from exc
-        self._model = SentenceTransformer(model_name)
+        self._model = SentenceTransformer(model_name, trust_remote_code=True)
         self.dim = int(self._model.get_sentence_embedding_dimension())
+        self._qkw: dict = {}
+        if (query_prompt and getattr(self._model, "prompts", None)
+                and query_prompt in (self._model.prompts or {})):
+            self._qkw = {"prompt_name": query_prompt}
 
     def encode(self, texts: list[str]) -> list[list[float]]:
-        vecs = self._model.encode(texts, normalize_embeddings=True)
+        vecs = self._model.encode(texts, normalize_embeddings=True, **self._qkw)
         return [list(map(float, v)) for v in vecs]
 
 
 def make_embedder() -> Embedder:
     """설정(rag.embedder)에 따라 임베더 생성. 기본은 무의존 해시 임베더."""
     cfg = get_settings().rag
-    if cfg.embedder == "bge-m3":
-        return SentenceTransformerEmbedder(cfg.embedding_model)
+    if cfg.embedder in ("bge-m3", "st"):
+        return SentenceTransformerEmbedder(cfg.embedding_model, cfg.query_prompt)
     return HashingEmbedder(cfg.dim)

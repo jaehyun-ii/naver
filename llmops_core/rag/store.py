@@ -111,9 +111,66 @@ class QdrantVectorStore:
         return int(self._client.count(self._collection).count)
 
 
+class ParentQdrantStore:
+    """parent-직접 인덱스 스토어 — 원시 컬렉션명 + parent 본문 하이드레이션.
+
+    Nemotron 재인덱싱 컬렉션(payload: parent_chunk_id·publisher, 본문 미저장)을
+    검색하고, 본문은 rag_parents.db(sqlite)에서 조 단위로 채워 Hit을 만든다.
+    테넌트 명명 규칙 없이 컬렉션명을 그대로 사용한다(오프라인 인덱서와 정합).
+    """
+
+    def __init__(self, collection: str, parent_db: str | None) -> None:
+        try:
+            import qdrant_client  # noqa: F401
+        except ImportError as exc:  # pragma: no cover
+            raise OptionalDependencyError("qdrant-client", "rag") from exc
+        from llmops_core.rag.retriever import qdrant_client as _qc
+
+        self._client = _qc()
+        self._collection = collection
+        self._db_path = parent_db
+        self._db = None
+
+    def _parent(self, cid: str) -> tuple[str, str]:
+        import sqlite3
+
+        if self._db is None and self._db_path:
+            self._db = sqlite3.connect(f"file:{self._db_path}?mode=ro",
+                                       uri=True, check_same_thread=False)
+        if self._db is None:
+            return "", ""
+        row = self._db.execute(
+            "SELECT section_path, content FROM parents WHERE chunk_id=?",
+            (cid,)).fetchone()
+        return (row[0] or "", row[1] or "") if row else ("", "")
+
+    def search(self, query_vec: list[float], k: int = 4) -> list[Hit]:
+        res = self._client.search(self._collection, query_vector=query_vec, limit=k)
+        hits: list[Hit] = []
+        for p in res:
+            cid = (p.payload or {}).get("parent_chunk_id", "")
+            path, content = self._parent(cid)
+            if not content:
+                continue
+            hits.append(Hit(Document(
+                id=cid, text=content[:4000],
+                metadata={"section_path": path,
+                          "publisher": (p.payload or {}).get("publisher", "")}),
+                float(p.score)))
+        return hits
+
+    def count(self) -> int:  # pragma: no cover
+        return int(self._client.count(self._collection).count)
+
+    def add(self, docs, vecs) -> None:  # pragma: no cover
+        raise NotImplementedError("qdrant_parents는 읽기 전용 — 오프라인 인덱서로 적재")
+
+
 def make_vector_store(dim: int):
     """설정(rag.backend)에 따라 벡터스토어 생성."""
     cfg = get_settings().rag
     if cfg.backend == "qdrant":
         return QdrantVectorStore(cfg.collection, dim)
+    if cfg.backend == "qdrant_parents":
+        return ParentQdrantStore(cfg.collection, cfg.parent_db)
     return InMemoryVectorStore(cfg.persist_path)
