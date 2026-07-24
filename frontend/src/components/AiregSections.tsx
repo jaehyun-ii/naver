@@ -42,14 +42,9 @@ function GenRowView({ r }: { r: GenRow }) {
         <TableCell><Typography variant="body2" noWrap sx={{ maxWidth: 480 }}>{r.question}</Typography></TableCell>
         <TableCell width={70}><ScoreChip v={r.tuned_score} /></TableCell>
         <TableCell width={70}><ScoreChip v={r.base_score} /></TableCell>
-        <TableCell width={110}>
-          {r.gold_label && (
-            <Chip size="small" color={r.label_match ? "success" : "error"}
-              label={`${r.gold_label}→${r.tuned_label ?? "?"}`} />)}
-        </TableCell>
       </TableRow>
       <TableRow>
-        <TableCell colSpan={6} sx={{ py: 0, border: 0 }}>
+        <TableCell colSpan={5} sx={{ py: 0, border: 0 }}>
           <Collapse in={open} unmountOnExit>
             <Stack spacing={1} sx={{ py: 1.5, pl: 2 }}>
               <Typography variant="caption" color="text.secondary">질문</Typography>
@@ -94,7 +89,6 @@ export function AiregGenEvalSection({ suite = DEFAULT_SUITE, live = true }: { su
           onChange={(e) => setOnly(e.target.value)}>
           <MenuItem value="all">전체</MenuItem>
           <MenuItem value="scored">채점 완료만</MenuItem>
-          <MenuItem value="mismatch">판정 불일치만</MenuItem>
         </TextField>
         {data && <Chip label={`${data.total}건 전체 표시`} sx={{ alignSelf: "center" }} />}
       </Stack>
@@ -103,7 +97,7 @@ export function AiregGenEvalSection({ suite = DEFAULT_SUITE, live = true }: { su
           <Table size="small">
             <TableHead><TableRow>
               <TableCell /><TableCell>트랙</TableCell><TableCell>질문</TableCell>
-              <TableCell>튜닝</TableCell><TableCell>베이스</TableCell><TableCell>판정</TableCell>
+              <TableCell>튜닝</TableCell><TableCell>베이스</TableCell>
             </TableRow></TableHead>
             <TableBody>
               {(data?.rows ?? []).map((r) => <GenRowView key={r.source} r={r} />)}
