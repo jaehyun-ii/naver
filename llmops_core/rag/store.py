@@ -69,6 +69,14 @@ class InMemoryVectorStore:
         self._vecs = payload.get("vecs", [])
 
 
+def _qdrant_search(client, collection: str, query_vec: list[float], k: int):
+    """qdrant-client 버전 호환 검색 — 1.10+는 query_points, 구버전은 search."""
+    if hasattr(client, "query_points"):
+        return client.query_points(collection, query=query_vec, limit=k,
+                                   with_payload=True).points
+    return client.search(collection, query_vector=query_vec, limit=k)
+
+
 class QdrantVectorStore:
     """Qdrant 백엔드(lazy). 대규모·다중인스턴스용. 인터페이스는 인메모리와 동일.
 
@@ -100,7 +108,7 @@ class QdrantVectorStore:
         self._client.upsert(self._collection, points)
 
     def search(self, query_vec: list[float], k: int = 4) -> list[Hit]:  # pragma: no cover
-        res = self._client.search(self._collection, query_vector=query_vec, limit=k)
+        res = _qdrant_search(self._client, self._collection, query_vec, k)
         return [
             Hit(Document(id=p.payload["id"], text=p.payload["text"],
                          metadata=p.payload.get("metadata")), float(p.score))
@@ -145,7 +153,7 @@ class ParentQdrantStore:
         return (row[0] or "", row[1] or "") if row else ("", "")
 
     def search(self, query_vec: list[float], k: int = 4) -> list[Hit]:
-        res = self._client.search(self._collection, query_vector=query_vec, limit=k)
+        res = _qdrant_search(self._client, self._collection, query_vec, k)
         hits: list[Hit] = []
         for p in res:
             cid = (p.payload or {}).get("parent_chunk_id", "")
