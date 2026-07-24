@@ -90,6 +90,15 @@ services:
       LLMOPS_S3__ACCESS_KEY: minioadmin
       LLMOPS_S3__SECRET_KEY: minioadmin
       LLMOPS_QDRANT__URL: http://qdrant:6333
+      # ── RAG 서빙 검색 스택: Nemotron-1B parent-직접 + VL 리랭커 (벤치 92%/무앵커 87.5%) ──
+      LLMOPS_RAG__EMBEDDER: st
+      LLMOPS_RAG__EMBEDDING_MODEL: nvidia/Nemotron-3-Embed-1B-BF16
+      LLMOPS_RAG__QUERY_PROMPT: query
+      LLMOPS_RAG__BACKEND: qdrant_parents
+      LLMOPS_RAG__COLLECTION: regs_parents_nem1b
+      LLMOPS_RAG__PARENT_DB: /home/jaehyun/Dev/naver/data_chunks_full/rag_parents.db
+      LLMOPS_RAG__RERANKER_MODEL: nvidia/llama-nemotron-rerank-vl-1b-v2
+      LLMOPS_RAG__TOP_K: "4"
       LLMOPS_MLFLOW__TRACKING_URI: http://mlflow:5000
       LLMOPS_TELEMETRY__BACKEND: otel
       LLMOPS_TELEMETRY__OTLP_ENDPOINT: http://otel-collector:4317

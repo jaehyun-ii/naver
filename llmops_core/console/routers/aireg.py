@@ -123,8 +123,11 @@ def qa(suite: str = "suite_v5", track: str | None = None,
                 "track": r.get("track", f.replace("_qa.jsonl", "")),
                 "status": r.get("status"),
                 "review_reasons": r.get("review_reasons") or [],
-                "question": (r.get("question") or "")[:600],
-                "gold_answer": (r.get("gold_answer") or "")[:600],
+                "question": (r.get("question") or "")[:1500],
+                "gold_answer": (r.get("gold_answer") or "")[:1500],
+                "evidence": [{"section_path": e.get("section_path", ""),
+                              "quote": (e.get("quote") or "")[:600]}
+                             for e in (r.get("evidence") or [])[:4]],
                 "ts": (r.get("_gen") or {}).get("ts", ""),
             })
     rows.sort(key=lambda r: r["ts"], reverse=True)

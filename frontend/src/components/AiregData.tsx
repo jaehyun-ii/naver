@@ -1,9 +1,11 @@
 /** AIReg 생성 데이터셋 섹션 — 데이터셋 페이지(생성·관리)와 AIReg 페이지가 공유. */
 import { useState } from "react";
 import {
-  Card, CardContent, Chip, MenuItem, Stack, Table, TableBody, TableCell,
-  TableHead, TableRow, TextField, Typography,
+  Card, CardContent, Chip, Collapse, IconButton, MenuItem, Stack, Table,
+  TableBody, TableCell, TableHead, TableRow, TextField, Typography,
 } from "@mui/material";
+import KeyboardArrowDown from "@mui/icons-material/KeyboardArrowDown";
+import KeyboardArrowUp from "@mui/icons-material/KeyboardArrowUp";
 import { Loading, ErrorView, EmptyView } from "./StateViews";
 import { useApi } from "../hooks/useApi";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
@@ -27,9 +29,12 @@ interface Overview {
   summary: Record<string, unknown> | null;
 }
 
+interface QaEvidence { section_path: string; quote: string }
+
 interface QaRow {
   question_id: string; track: string; status: string;
-  review_reasons: string[]; question: string; gold_answer: string; ts: string;
+  review_reasons: string[]; question: string; gold_answer: string;
+  evidence: QaEvidence[]; ts: string;
 }
 
 export function AiregOverviewSection({ suite, live }: { suite: string; live: boolean }) {
@@ -100,6 +105,67 @@ export function AiregOverviewSection({ suite, live }: { suite: string; live: boo
   );
 }
 
+/** QA 행 — 요약(질문·정답) + 확장 상세(전체 답변·근거 발췌·거절/리뷰 사유 전문). */
+function QaRowView({ r }: { r: QaRow }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <TableRow hover onClick={() => setOpen(!open)} sx={{ cursor: "pointer" }}>
+        <TableCell>
+          <IconButton size="small">{open ? <KeyboardArrowUp /> : <KeyboardArrowDown />}</IconButton>
+        </TableCell>
+        <TableCell>
+          <Chip size="small" color={AIREG_STATUS_COLOR[r.status] ?? "default"} label={r.status} />
+          {r.review_reasons.slice(0, 1).map((x) => (
+            <Typography key={x} variant="caption" display="block" color="text.secondary">
+              {x.split(":")[0]}
+            </Typography>))}
+        </TableCell>
+        <TableCell>{r.track}<Typography variant="caption" display="block" color="text.secondary">{r.ts.slice(11, 19)}</Typography></TableCell>
+        <TableCell>
+          <Typography variant="body2" noWrap sx={{ maxWidth: 560 }}>{r.question}</Typography>
+          <Typography variant="body2" color="success.main" noWrap sx={{ mt: 0.5, maxWidth: 560 }}>
+            {r.gold_answer}
+          </Typography>
+        </TableCell>
+      </TableRow>
+      <TableRow>
+        <TableCell colSpan={4} sx={{ py: 0, border: 0 }}>
+          <Collapse in={open} unmountOnExit>
+            <Stack spacing={1} sx={{ py: 1.5, pl: 2, pr: 2 }}>
+              <Typography variant="caption" color="text.secondary">질문 전문</Typography>
+              <Typography variant="body2" whiteSpace="pre-wrap">{r.question}</Typography>
+              <Typography variant="caption" color="success.main">정답(실제 답변) 전문</Typography>
+              <Typography variant="body2" whiteSpace="pre-wrap">{r.gold_answer || "(없음)"}</Typography>
+              {r.evidence.length > 0 && (
+                <>
+                  <Typography variant="caption" color="primary.main">근거 발췌 (evidence)</Typography>
+                  {r.evidence.map((e, i) => (
+                    <Stack key={i} spacing={0.25} sx={{ borderLeft: "3px solid", borderColor: "divider", pl: 1 }}>
+                      <Typography variant="caption" color="text.secondary">{e.section_path}</Typography>
+                      <Typography variant="body2" whiteSpace="pre-wrap">{e.quote}</Typography>
+                    </Stack>
+                  ))}
+                </>
+              )}
+              {r.review_reasons.length > 0 && (
+                <>
+                  <Typography variant="caption" color="warning.main">
+                    {r.status === "REJECT" ? "거절 사유" : "리뷰 사유"} 전문
+                  </Typography>
+                  {r.review_reasons.map((x, i) => (
+                    <Typography key={i} variant="body2" whiteSpace="pre-wrap">· {x}</Typography>
+                  ))}
+                </>
+              )}
+            </Stack>
+          </Collapse>
+        </TableCell>
+      </TableRow>
+    </>
+  );
+}
+
 export function AiregQaSection({ suite, live }: { suite: string; live: boolean }) {
   const [status, setStatus] = useState("");
   const [track, setTrack] = useState("");
@@ -128,26 +194,12 @@ export function AiregQaSection({ suite, live }: { suite: string; live: boolean }
         <Card><CardContent sx={{ p: 0 }}>
           <Table size="small">
             <TableHead><TableRow>
+              <TableCell width={40} />
               <TableCell width={90}>상태</TableCell><TableCell width={110}>트랙</TableCell>
-              <TableCell>질문 / 정답 (생성 시각순)</TableCell>
+              <TableCell>질문 / 정답 (생성 시각순 · 행 클릭 시 근거·사유 상세)</TableCell>
             </TableRow></TableHead>
             <TableBody>
-              {(data?.rows ?? []).map((r) => (
-                <TableRow key={r.question_id + r.track}>
-                  <TableCell>
-                    <Chip size="small" color={AIREG_STATUS_COLOR[r.status] ?? "default"} label={r.status} />
-                    {r.review_reasons.slice(0, 1).map((x) => (
-                      <Typography key={x} variant="caption" display="block" color="text.secondary">
-                        {x.split(":")[0]}
-                      </Typography>))}
-                  </TableCell>
-                  <TableCell>{r.track}<Typography variant="caption" display="block" color="text.secondary">{r.ts.slice(11, 19)}</Typography></TableCell>
-                  <TableCell>
-                    <Typography variant="body2">{r.question}</Typography>
-                    <Typography variant="body2" color="success.main" sx={{ mt: 0.5 }}>{r.gold_answer}</Typography>
-                  </TableCell>
-                </TableRow>
-              ))}
+              {(data?.rows ?? []).map((r) => <QaRowView key={r.question_id + r.track} r={r} />)}
             </TableBody>
           </Table>
         </CardContent></Card>
