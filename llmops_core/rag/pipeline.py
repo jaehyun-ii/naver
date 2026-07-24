@@ -125,15 +125,33 @@ class RagPipeline:
             return hits
 
     def build_context(self, hits: list[Hit]) -> str:
-        """학습 데이터(RAFT)와 동일한 문서 블록 — "[문서 i] 계층경로\\n본문"."""
-        blocks = []
+        """학습 데이터(RAFT)와 동일한 문서 블록 — "[문서 i] 계층경로\\n본문".
+
+        전체 문자 예산(context_budget_chars) 내에서 상위 히트부터 채운다 —
+        긴 조 여러 개가 동시에 걸려 모델 윈도우를 넘는 꼬리 케이스 방지.
+        첫 문서는 예산을 넘어도 절단해서라도 포함한다(빈 컨텍스트 방지).
+        """
+        budget = get_settings().rag.context_budget_chars
+        blocks: list[str] = []
+        used = 0
         for i, h in enumerate(hits, 1):
             meta = getattr(h.document, "metadata", None) or {}
             path = meta.get("section_path") or ""
             if isinstance(path, list):
                 path = " > ".join(path)
             head = f"[문서 {i}]" + (f" {path}" if path else "")
-            blocks.append(f"{head}\n{h.document.text}")
+            block = f"{head}\n{h.document.text}"
+            if blocks and used + len(block) > budget:
+                remain = budget - used
+                if remain < 500:  # 의미 없는 꼬리 조각은 버림
+                    break
+                block = block[:remain]
+            elif not blocks:
+                block = block[:budget]
+            blocks.append(block)
+            used += len(block)
+            if used >= budget:
+                break
         return "\n\n".join(blocks)
 
     def augment(self, query: str, *, k: int | None = None,

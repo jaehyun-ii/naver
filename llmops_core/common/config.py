@@ -110,6 +110,9 @@ class RagSettings(BaseModel):
     # 컨텍스트 주입 위치 — "system"(범용) | "user"(RAFT 학습 형식: user에 컨텍스트+[질문]).
     # HCX 계열은 chat template이 system을 못 받으므로 user 모드가 학습·서빙 정합.
     inject_mode: str = "system"
+    # 컨텍스트 전체 문자 예산 — 긴 조(parent) 여러 개가 동시에 걸리는 꼬리 케이스에서
+    # 모델 윈도우(vLLM 12k 토큰) 초과를 방지. 리랭크 순서대로 채우고 초과분은 절단.
+    context_budget_chars: int = 12000
     persist_path: str | None = "./rag_store"  # memory 백엔드 디스크 영속(없으면 휘발)
     # 서빙 시점 자동 RAG — 게이트웨이가 요청을 검색·컨텍스트 주입 후 모델 호출.
     # 기본 off(요청별 extra.rag로 override). 켜면 평가(--rag)와 서빙이 동일 경로로 정합.
