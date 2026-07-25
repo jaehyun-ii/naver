@@ -853,6 +853,12 @@ def gen_formula_calc(rule: dict, aux: dict | None, feedback: str = "") -> dict |
         flags.append("final_value_missing")
     if judgment in ("충족", "미충족") and not re.search(r"[<>≤≥]", joined):
         flags.append("inequality_missing")
+    # 부여 값을 질문에 결정적으로 명시 — 질문만으로 계산 가능해야 하며,
+    # 검증자도 '원문에 없는 수치'로 오판하지 않는다.
+    if given := (obj.get("given") or {}):
+        if "[주어진 값]" not in q:
+            q = q.rstrip() + "\n\n[주어진 값]\n" + ", ".join(
+                f"{k} = {v}" for k, v in given.items())
     row = base_row(rule, "formula_calc", "FORMULA_CALC_QA")
     row.update({
         "question": anchor_question(q, rule),

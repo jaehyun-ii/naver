@@ -209,6 +209,10 @@ def build_prompt(row: dict) -> str:
     # 일반 대안 재허용 서술이 ACCEPT 통과 실측 → 검증기 강제 점검으로 이중화)
     if row.get("track") == "crossref" and len(evs) >= 2:
         term_watch += prompts.SUITE_VERIFY_XREF_WATCH
+    if row.get("track") == "formula_calc":
+        term_watch += prompts.SUITE_VERIFY_FORMULA_WATCH
+    if row.get("track") == "figure_qa":
+        term_watch += prompts.SUITE_VERIFY_FIGURE_WATCH
     judgment_note = (f" — 기대 판정: {row['expected_judgment']}"
                      if row.get("expected_judgment") else "")
     judgment_guide = (prompts.SUITE_VERIFY_JUDGMENT_GUIDE.format(
