@@ -77,6 +77,24 @@ def run_etl(pdf_path: Path, out_root: Path, cfg: EtlConfig | None = None, *, nam
     # 3) pdftext 병합 후처리(결정적) — content_list.json 덮어쓰기 + .md
     report = postprocess_mineru_output_dir(input_path=pdf_path, output_dir=mineru_out, doc_name=name)
 
+    # 3.5) 수식 재인식 패스 — 비-LaTeX equation 블록을 bbox 크롭으로 VLM 재인식
+    #      (실측: 1차 추출 후 음역 잔존 수식 복원, 실패 시 formula_reco_failed 마크)
+    if cfg.formula_enabled:
+        import json as _json
+
+        from .formula_fix import rerecognize_equations
+
+        cl_path = _find([p for p in mineru_out.rglob("*") if p.is_file()],
+                        "content_list.json", ("content_list_v2.json",))
+        if cl_path:
+            cl = _json.loads(cl_path.read_text(encoding="utf-8"))
+            fx = rerecognize_equations(pdf_path, cl, endpoint=cfg.endpoint,
+                                       model=cfg.model)
+            if fx["fixed"] or fx["failed"]:
+                cl_path.write_text(_json.dumps(cl, ensure_ascii=False),
+                                   encoding="utf-8")
+            report["formula_fix"] = fx
+
     # 4) 산출물을 <name>_ 프리픽스로 상위 doc_dir에 수집
     files = [p for p in mineru_out.rglob("*") if p.is_file()]
     collected: dict[str, str] = {}

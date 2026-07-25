@@ -314,6 +314,43 @@ def _attach_tables(parents: list[dict], tables_by_id: dict[str, dict],
             p["content"] = p["content"].rstrip() + "\n\n[인용된 표]\n" + "\n\n".join(blocks)
 
 
+def _attach_figures(parents: list[dict], figures: dict[str, dict],
+                    cap_chars: int = 4000) -> None:
+    """조 parent의 content 뒤에 링크된 그림의 캡션·이미지 분석 텍스트를 붙인다.
+
+    parent에는 "그림 N에 따른다" 참조만 있고 시각 정보는 figure 청크의
+    retrieval_text/content(MinerU image-analysis 설명·OCR)에만 있다.
+    링크는 figure.linked_article_id → parent 역방향(구·신 청커 공통)과
+    parent.linked_figure_chunk_ids(신 청커) 양쪽을 지원한다.
+    설명이 사실상 빈 그림(캡션 반복뿐)은 주입하지 않는다."""
+    by_article: dict[str, list[dict]] = {}
+    for fg in figures.values():
+        aid = fg.get("linked_article_id")
+        if aid:
+            by_article.setdefault(aid, []).append(fg)
+    for p in parents:
+        linked = [figures[i] for i in (p.get("linked_figure_chunk_ids") or [])
+                  if i in figures]
+        figs = {fg["chunk_id"]: fg for fg in linked + by_article.get(p["chunk_id"], [])}
+        blocks, total = [], 0
+        for fg in figs.values():
+            text = (fg.get("retrieval_text") or fg.get("content")
+                    or fg.get("caption") or "").strip()
+            cap = (fg.get("caption") or "").strip()
+            # 캡션 외 정보가 15자 미만이면 설명 없는 그림 — 주입 무의미
+            if len(text.replace(cap, "").strip()) < 15:
+                continue
+            block = text[:1200]
+            if total + len(block) > cap_chars:
+                blocks.append("(이하 그림 설명 생략 — 분량 제한)")
+                break
+            blocks.append(block)
+            total += len(block)
+        if blocks:
+            p["content"] = (p["content"].rstrip()
+                            + "\n\n[인용된 그림]\n" + "\n\n".join(blocks))
+
+
 def select_rules(chapters: str = "7,2", n: int = 30, min_tokens: int = 150,
                  publisher: str = "KR", doc_glob: str | None = None) -> list[dict]:
     """실질 요건이 있는 규칙 조(parent)를 n개 선정.
