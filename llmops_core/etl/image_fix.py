@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import re
 import urllib.request
 from pathlib import Path
 
@@ -53,6 +54,37 @@ def _chat_describe(endpoint: str, model: str, png: bytes, timeout: int = 120) ->
                                  {"Content-Type": "application/json"})
     out = json.load(urllib.request.urlopen(req, timeout=timeout))
     return (out["choices"][0]["message"]["content"] or "").strip()
+
+
+# 그림 '제목' 마커 — "그림 N" 뒤에 조사가 붙으면 본문 참조("그림 2.1.13과 같이"),
+# 조사 없이 이어지면 제목("그림 2.1.12 이음매 없는 강관")으로 구분한다.
+_TITLE_MARK = re.compile(r"(그림|Fig\.?)\s*[\d.]+(?![과와을를에의은는이가로0-9.])")
+_SENT_END = re.compile(r"(한다|된다|이다|같다|시오)\s*\.?\s*$")
+
+
+def sanitize_captions(content_list: list[dict]) -> int:
+    """캡션에 흡수된 본문 문장 분리 — 제목 마커 앞의 서술형 텍스트를 캡션에서
+    떼어 image 블록 직전의 text 블록으로 되돌린다(읽기 순서 보존). 정화 수 반환."""
+    cleaned = 0
+    i = 0
+    while i < len(content_list):
+        b = content_list[i]
+        if b.get("type") != "image":
+            i += 1
+            continue
+        cap = _caption_of(b)
+        m = _TITLE_MARK.search(cap)
+        if m and m.start() >= 3:
+            pre = cap[:m.start()].strip()
+            if pre and (_SENT_END.search(pre) or len(pre) > 40):
+                b["image_caption"] = [cap[m.start():].strip()]
+                content_list.insert(i, {"type": "text", "text": pre,
+                                        "page_idx": b.get("page_idx", 0),
+                                        "restored_from_caption": True})
+                cleaned += 1
+                i += 1  # 삽입한 text 블록 건너뜀
+        i += 1
+    return cleaned
 
 
 _MERGE_GAP = 18      # 세로 인접 판단 간격(pt)
@@ -103,12 +135,13 @@ def merge_fragmented_images(content_list: list[dict]) -> int:
 
 def reanalyze_images(pdf_path: Path, content_list: list[dict], *,
                      endpoint: str, model: str, zoom: float = 3.0) -> dict:
-    """조각 병합 → 설명 빈약 image 블록 재분석(in-place). 통계 반환."""
+    """캡션 정화 → 조각 병합 → 설명 빈약 image 블록 재분석(in-place). 통계 반환."""
+    n_clean = sanitize_captions(content_list)
     n_merged = merge_fragmented_images(content_list)
     weak = [b for b in content_list
             if b.get("type") == "image" and _desc_len(b) < _MIN_DESC]
     stats = {"images": sum(1 for b in content_list if b.get("type") == "image"),
-             "merged": n_merged, "weak": len(weak), "fixed": 0, "failed": 0}
+             "caption_cleaned": n_clean, "merged": n_merged, "weak": len(weak), "fixed": 0, "failed": 0}
     if not weak:
         return stats
     import pymupdf
