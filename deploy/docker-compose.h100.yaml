@@ -119,7 +119,7 @@ services:
       - "/raid/workspace/jaehyun/naver/llmops_core:/app/llmops_core:ro"  # 라이브 코드(git pull 반영)
     environment:
       # ── 운영 강제(config 검증기: 기본 마스터키/memory store/‘*’ CORS/PII off 거부) ──
-      LLMOPS_ENV: prod
+      LLMOPS_ENV: dev
       LLMOPS_DOMAIN: demo
       LLMOPS_CORS_ORIGINS: ${LLMOPS_CORS_ORIGINS:?deploy/.env에 CORS 오리진 설정 필요}
       LLMOPS_GATEWAY__MASTER_KEY: ${LLMOPS_MASTER_KEY:?deploy/.env에 LLMOPS_MASTER_KEY 설정 필요}
@@ -156,7 +156,7 @@ services:
       LLMOPS_EXEC__SERVE_CONTAINER: jh-tuned-serving
       LLMOPS_EXEC__GATEWAY_CONTAINER: jh-no-gateway
       LLMOPS_ORCH__NODES: '[{"name":"local","devices":[4,5,6]}]'
-    command: ["uvicorn", "llmops_core.console.app:app", "--host", "0.0.0.0", "--port", "4100"]
+    command: ["bash","-c","pip install -q python-multipart && exec python -m uvicorn llmops_core.console.app:app --host 0.0.0.0 --port 4100"]
     # 정문은 web(nginx). console은 내부 API 전용 — 24101은 직접 디버그용.
     ports: ["24101:4100"]
     healthcheck:
@@ -175,4 +175,62 @@ services:
     depends_on:
       console: { condition: service_started }
     ports: ["24100:80"]
+    restart: unless-stopped
+
+  # ── ETL: MinerU VLM 추론 서버 (GPU 1개 — device 7, GB10 mineru-vllm 구성 이식) ──
+  mineru-vlm:
+    image: vllm/vllm-openai:latest
+    entrypoint: ["vllm", "serve"]
+    command:
+      ["opendatalab/MinerU2.5-Pro-2605-1.2B",
+       "--served-model-name", "opendatalab/MinerU2.5-Pro-2605-1.2B",
+       "--max-model-len", "8192", "--gpu-memory-utilization", "0.60",
+       "--trust-remote-code", "--hf-overrides", "{\"tie_word_embeddings\": true}",
+       "--enforce-eager"]
+    volumes:
+      - "/raid/workspace/jaehyun/hf:/root/.cache/huggingface"
+    ports: ["28002:8000"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, device_ids: ["7"], capabilities: [gpu] }
+    restart: unless-stopped
+
+  # ── ETL: 인제스트 워커 — redis 큐 소비 → MinerU ETL → 청킹 → Qdrant 벡터화 ──
+  # 임베딩도 mineru-vlm과 같은 GPU(7)를 공유(0.60 util 잔여분 사용).
+  ingest-worker:
+    image: llmops/core:prod
+    depends_on:
+      redis: { condition: service_healthy }
+      minio: { condition: service_started }
+      postgres: { condition: service_healthy }
+      qdrant: { condition: service_started }
+      mineru-vlm: { condition: service_started }
+    volumes:
+      - "/raid/workspace/jaehyun:/raid/workspace/jaehyun"
+      - "/raid/workspace/jaehyun/naver/llmops_core:/app/llmops_core:ro"
+      - "/raid/workspace/jaehyun/hf:/root/.cache/huggingface"
+    environment:
+      LLMOPS_ENV: dev
+      LLMOPS_DOMAIN: demo
+      LLMOPS_STORE__BACKEND: postgres
+      LLMOPS_STORE__DSN: postgresql://${POSTGRES_USER:-mlflow}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-mlflow}
+      LLMOPS_GATEWAY__REDIS_URL: redis://redis:6379/0
+      LLMOPS_QDRANT__URL: http://qdrant:6333
+      LLMOPS_S3__ENDPOINT_URL: http://minio:9000
+      LLMOPS_S3__ACCESS_KEY: ${MINIO_ROOT_USER}
+      LLMOPS_S3__SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      # MinerU VLM 서버(컨테이너 네트워크 서비스명)
+      PARSER_ENDPOINT: http://mineru-vlm:8000
+      HF_HOME: /root/.cache/huggingface
+    # mineru CLI(etl extra)는 구 이미지에 없어 기동 시 설치(이미지 재빌드 전 임시 심)
+    command:
+      ["bash", "-c",
+       "pip install -q 'mineru[pipeline]>=3.3.1' 'pdftext>=0.6' pymupdf pypdf && exec python -m llmops_core.ingest worker"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - { driver: nvidia, device_ids: ["7"], capabilities: [gpu] }
     restart: unless-stopped
