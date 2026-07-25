@@ -296,6 +296,8 @@ def reanalyze_images(pdf_path: Path, content_list: list[dict], *,
         if len(content) < _MIN_DESC:
             continue
         first = re.split(r"(?<=[.다])\s", content)[0][:60].strip()
+        if len(first) < 8:  # 표형 OCR("Cond." 등) 짧은 조각 — 앞 60자로 폴백
+            first = content.replace("\n", " ")[:60].strip()
         if len(first) >= 8:
             b["image_caption"] = [first]
             b["caption_synthesized"] = True
