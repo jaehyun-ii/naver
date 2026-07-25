@@ -688,9 +688,14 @@ def gen_unit_convert(rule: dict, aux: dict, feedback: str = "") -> dict | None:
         # 재량 단서 조항의 미충족은 단정 대신 조건부 서술 — 부족한 것은 다른
         # 조항이 아니라 사안 사실(선급 참작 여부)이라 RAG로도 확정 불가.
         # 실서빙이 원하는 행동: 원칙 판정 + 재량 경로 안내(단정 금지).
+        # 부등식 명시(v2a): 비교 방향을 기호로 고정해 경계 방향 오류를 차단한다.
         "gold_answer": (f"기준: '{aux['rule_sentence']}' — {fmt_num(thr)} {unit_disp} "
-                        f"{aux['op_kr']}. 발췌의 설계값 {fact_str} {conv_disp}"
-                        f" = {fmt_num(back)} {unit_disp} → 기준 {'충족(compliant)' if sat else '미충족(non_compliant)'}."
+                        f"{aux['op_kr']}. 환산: 발췌의 설계값 {fact_str} {conv_disp}"
+                        f" = {fmt_num(back)} {unit_disp}. "
+                        f"비교: {fmt_num(back)} {unit_disp} "
+                        f"{'>' if back > thr else ('<' if back < thr else '=')} "
+                        f"기준 {fmt_num(thr)} {unit_disp} (요구: {aux['op_kr']}) "
+                        f"→ 기준 {'충족(compliant)' if sat else '미충족(non_compliant)'}."
                         + (f" 다만 원문 단서('{relief}')에 따라 선급의 참작·인정 "
                            "대상이 될 수 있으므로, 단서 해당 여부와 선급 승인 "
                            "여부를 별도로 확인하여야 한다."

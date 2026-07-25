@@ -376,6 +376,8 @@ def select_rules(chapters: str = "7,2", n: int = 30, min_tokens: int = 150,
     picked = picked[:n]
     _attach_tables(picked, {r["chunk_id"]: r for r in rows
                             if r.get("chunk_type") == "table"})
+    _attach_figures(picked, {r["chunk_id"]: r for r in rows
+                             if r.get("chunk_type") == "figure"})
     return picked
 
 
@@ -392,13 +394,16 @@ def select_one_per_doc(publishers: str = ALL_PUBLISHERS, min_tokens: int = 150,
     picked: list[dict] = []
     for publisher in [p.strip() for p in publishers.split(",")]:
         for f in glob_docs(CHUNK_DIR / publisher, "*_chunks.jsonl"):
-            cands, tables = [], {}
+            cands, tables, figures = [], {}, {}
             for l in f.open(encoding="utf-8"):
-                if '"parent"' not in l and '"table"' not in l:
+                if ('"parent"' not in l and '"table"' not in l
+                        and '"figure"' not in l):
                     continue
                 r = json.loads(l)
                 if r.get("chunk_type") == "table":
                     tables[r["chunk_id"]] = r
+                elif r.get("chunk_type") == "figure":
+                    figures[r["chunk_id"]] = r
                 elif _is_requirement_parent(r, publisher, min_tokens):
                     r["publisher"] = publisher
                     r["_source_file"] = nfc(f.stem)
@@ -409,6 +414,7 @@ def select_one_per_doc(publishers: str = ALL_PUBLISHERS, min_tokens: int = 150,
             best = (max(small, key=lambda c: c["content_tokens"]) if small
                     else min(cands, key=lambda c: c["content_tokens"]))
             _attach_tables([best], tables)
+            _attach_figures([best], figures)
             picked.append(best)
     return picked
 

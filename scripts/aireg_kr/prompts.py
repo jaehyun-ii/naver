@@ -15,6 +15,9 @@ from __future__ import annotations
 # 2026-07-22: LANG_RULE 인용 충실도 강화(연속 단일 구간·'...' 연결 금지·표/수식 표기
 #   보존) — evidence_span_unresolved 게이트 검수행 급증 대응. quote 생성 트랙만 +1
 VERSIONS = {
+    # v2a(2026-07): 답변 순서 재배열(근거→검토→판단)·unit_convert 부등식 명시·
+    # 수식($$)·그림([인용된 그림]) 근거 활용 허용 — LANG_RULE·answer_format v2
+    "ANSWER_FORMAT": "v2",
     "RULE_CARD": "v5",          # v5: 형식 예시에서 실제 조문 값(SPP·230°C) 제거 — 과적합 차단
     "CASE_OVERVIEW": "v2",
     "PROFILE": "v2",
@@ -30,16 +33,16 @@ VERSIONS = {
     "CONDITION_CORRECT": "v2",  # 게이트 REJECT 조건 집합의 원문 기반 보강
     "VERIFY_FACTS": "v2",       # 2-pass 1단계: 사실 추출(규정 판단 금지)
     "VERIFY_JUDGE": "v2",       # 2-pass 2단계: facts+조건표 → primary label
-    "SPEC_QA": "v6",            # v3: 한정어 보존·수식어 창작 금지·영문 규범 술어 의미 보존(전문가 검수 반영)
-    "APPLICABILITY": "v15",     # v12: premise 필드 평탄화(중첩 JSON 붕괴 실측 — 4bit 피드백 라운드)
-    "CROSSREF_QA": "v8",        # v5: 참조 내용 전개 필수(번호 반복 금지)·전제-범위 무모순(40건 배치 A103 실측)
+    "SPEC_QA": "v7",            # v3: 한정어 보존·수식어 창작 금지·영문 규범 술어 의미 보존(전문가 검수 반영)
+    "APPLICABILITY": "v16",     # v12: premise 필드 평탄화(중첩 JSON 붕괴 실측 — 4bit 피드백 라운드)
+    "CROSSREF_QA": "v9",        # v5: 참조 내용 전개 필수(번호 반복 금지)·전제-범위 무모순(40건 배치 A103 실측)
     "COMPARE_QA": "v2",
     "ONESHOT_CASE": "v4",       # v4: 발췌 공통 규칙(_EXCERPT_RULES)로 통합 — 기준값 노출 금지 추가
     # 조 특성 트랙(build_suite_qa) — 라우팅 기반 능력별 1건 생성
-    "DEF_LINK_QA": "v7",        # v4: 참조 체인 폐쇄 — 정의 참조 조항 해소 시 3-근거 완결, 미해소만 금지
-    "PRECEDENCE_QA": "v11",      # v8: 질문 제시 규정=답 비교 규정 일치(검수 10차 OSV A204)
-    "TABLE_LOOKUP_QA": "v6",    # v3: 구간 경계 보존('넘고'=초과)·셀 조건 표현('필요시') 보존(전문가 검수 7차)
-    "HIERARCHY_QA": "v13",      # v10: premise 필드 평탄화(중첩 JSON 붕괴 실측 — A107 ERROR 연쇄 해소)
+    "DEF_LINK_QA": "v8",        # v4: 참조 체인 폐쇄 — 정의 참조 조항 해소 시 3-근거 완결, 미해소만 금지
+    "PRECEDENCE_QA": "v12",      # v8: 질문 제시 규정=답 비교 규정 일치(검수 10차 OSV A204)
+    "TABLE_LOOKUP_QA": "v7",    # v3: 구간 경계 보존('넘고'=초과)·셀 조건 표현('필요시') 보존(전문가 검수 7차)
+    "HIERARCHY_QA": "v14",      # v10: premise 필드 평탄화(중첩 JSON 붕괴 실측 — A107 ERROR 연쇄 해소)
     "UNIT_EXCERPT": "v5",       # v4: 발췌 공통 규칙(_EXCERPT_RULES)로 통합
     "STYLE_AUGMENT": "v3",      # v3: 경어체 통일·LANG_RULE 부착
     "SUITE_VERIFY": "v6",       # v6: 응답 완전성·판정 전제 충분성 기준 + crossref 특별요건 우선 점검(검수 9차 ACCEPT 약점 대응)

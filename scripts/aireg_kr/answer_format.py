@@ -5,8 +5,12 @@
 ``format_regulation_answer``, 해석은 ``parse_regulation_answer``, GRPO 형식 보상은
 ``format_reward`` 하나로 통일한다.
 
-규칙: 섹션 순서 고정(판단 → 근거 → 조건 검토 → 필요한 조치 → 추가 확인 정보),
+규칙: 섹션 순서 고정(근거 → 조건 검토 → 판단 → 필요한 조치 → 추가 확인 정보),
 빈 섹션은 생략(강제 출력 금지), '판단'은 필수.
+
+v2(2026-07): 판단을 조건 검토 '뒤'로 재배열 — 결론 선행 형식이 자기모순의
+주원인이었음(실측: unit_convert 실패 12건 중 7건이 계산 전에 결론을 커밋).
+계산·검토 토큰이 결론보다 먼저 생성되도록 순서를 뒤집는다.
 """
 from __future__ import annotations
 
@@ -14,9 +18,9 @@ import re
 
 # 순서가 곧 출력 순서 — 변경 시 VERSIONS의 관련 프롬프트 버전도 올릴 것
 ANSWER_SECTION_LABELS = {
-    "decision": "판단",
     "evidence": "근거",
     "condition_review": "조건 검토",
+    "decision": "판단",
     "required_action": "필요한 조치",
     "missing_information": "추가 확인 정보",
 }
