@@ -90,10 +90,18 @@ def run_etl(pdf_path: Path, out_root: Path, cfg: EtlConfig | None = None, *, nam
             cl = _json.loads(cl_path.read_text(encoding="utf-8"))
             fx = rerecognize_equations(pdf_path, cl, endpoint=cfg.endpoint,
                                        model=cfg.model)
-            if fx["fixed"] or fx["failed"]:
+            report["formula_fix"] = fx
+            gx = {}
+            if cfg.image_analysis:
+                from .image_fix import reanalyze_images
+
+                gx = reanalyze_images(pdf_path, cl, endpoint=cfg.endpoint,
+                                      model=cfg.model)
+                report["image_fix"] = gx
+            if (fx["fixed"] or fx["failed"]
+                    or gx.get("fixed") or gx.get("failed")):
                 cl_path.write_text(_json.dumps(cl, ensure_ascii=False),
                                    encoding="utf-8")
-            report["formula_fix"] = fx
 
     # 4) 산출물을 <name>_ 프리픽스로 상위 doc_dir에 수집
     files = [p for p in mineru_out.rglob("*") if p.is_file()]
