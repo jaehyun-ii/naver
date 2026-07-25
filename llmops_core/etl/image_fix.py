@@ -55,13 +55,60 @@ def _chat_describe(endpoint: str, model: str, png: bytes, timeout: int = 120) ->
     return (out["choices"][0]["message"]["content"] or "").strip()
 
 
+_MERGE_GAP = 18      # 세로 인접 판단 간격(pt)
+_MERGE_XOVL = 0.6    # 가로 겹침 최소 비율
+
+
+def merge_fragmented_images(content_list: list[dict]) -> int:
+    """세로로 쪼개진 그림 조각 병합 — 큰 그림이 여러 image 블록으로 나뉘고
+    캡션이 마지막 조각에만 붙는 문제(코퍼스 실측: 복수 그림 조의 6%) 대응.
+
+    같은 페이지에서 세로로 인접(간격 ≤18pt)하고 가로 겹침 ≥60%인 image 블록
+    체인을 하나로 합친다: bbox 합집합, 캡션·분석 텍스트 이어붙임. 좌우 병렬
+    배치(별개 소도면)는 병합하지 않는다. 병합 수 반환."""
+    from collections import defaultdict
+
+    by_pg: dict[int, list[dict]] = defaultdict(list)
+    for b in content_list:
+        if b.get("type") == "image" and b.get("bbox"):
+            by_pg[b.get("page_idx", 0)].append(b)
+    merged = 0
+    drop: set[int] = set()
+    for bs in by_pg.values():
+        bs.sort(key=lambda x: x["bbox"][1])
+        i = 0
+        while i < len(bs) - 1:
+            a, c = bs[i], bs[i + 1]
+            ax0, ay0, ax1, ay1 = a["bbox"]
+            cx0, cy0, cx1, cy1 = c["bbox"]
+            xovl = max(0.0, min(ax1, cx1) - max(ax0, cx0))
+            xden = max(1.0, min(ax1 - ax0, cx1 - cx0))
+            if cy0 - ay1 <= _MERGE_GAP and xovl / xden >= _MERGE_XOVL:
+                a["bbox"] = [min(ax0, cx0), ay0, max(ax1, cx1), cy1]
+                cap_a, cap_c = _caption_of(a), _caption_of(c)
+                a["image_caption"] = [" ".join(x for x in (cap_a, cap_c) if x)]
+                cont = " ".join(x for x in (str(a.get("content") or "").strip(),
+                                            str(c.get("content") or "").strip()) if x)
+                a["content"] = cont
+                a["merged_fragments"] = a.get("merged_fragments", 1) + 1
+                drop.add(id(c))
+                bs.pop(i + 1)
+                merged += 1
+            else:
+                i += 1
+    if drop:
+        content_list[:] = [b for b in content_list if id(b) not in drop]
+    return merged
+
+
 def reanalyze_images(pdf_path: Path, content_list: list[dict], *,
                      endpoint: str, model: str, zoom: float = 3.0) -> dict:
-    """설명 빈약 image 블록 재분석(in-place). 통계 반환."""
+    """조각 병합 → 설명 빈약 image 블록 재분석(in-place). 통계 반환."""
+    n_merged = merge_fragmented_images(content_list)
     weak = [b for b in content_list
             if b.get("type") == "image" and _desc_len(b) < _MIN_DESC]
     stats = {"images": sum(1 for b in content_list if b.get("type") == "image"),
-             "weak": len(weak), "fixed": 0, "failed": 0}
+             "merged": n_merged, "weak": len(weak), "fixed": 0, "failed": 0}
     if not weak:
         return stats
     import pymupdf
