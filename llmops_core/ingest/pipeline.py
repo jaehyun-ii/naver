@@ -101,6 +101,15 @@ def process_document(doc_id: str) -> Document:
             doc.vector_collection = collection
             doc.n_vectors = vres["n_vectors"]
 
+            # 6.5) parent-직접 인덱스(서빙 검색 스택 정합) — env 게이트
+            import os as _os
+            pcoll = _os.environ.get("INGEST_PARENT_COLLECTION")
+            if pcoll:
+                from .vectorize import vectorize_parents
+                pres = vectorize_parents(
+                    chunks, pcoll, parent_db=_os.environ.get("INGEST_PARENT_DB"))
+                logger.info("parent 인덱스 %s += %d", pcoll, pres["n_parents"])
+
         doc.status = STATUS_PROCESSED
         doc.updated_at = time.time()
         reg.save(doc)

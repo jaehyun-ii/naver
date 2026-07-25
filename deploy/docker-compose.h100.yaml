@@ -224,6 +224,11 @@ services:
       # MinerU VLM 서버(컨테이너 네트워크 서비스명)
       PARSER_ENDPOINT: http://mineru-vlm:8000
       HF_HOME: /root/.cache/huggingface
+      # 서빙 검색 스택 정합 — Nemotron 문서측 임베딩 + parent-직접 인덱스 적재
+      LLMOPS_RAG__EMBEDDER: st
+      LLMOPS_RAG__EMBEDDING_MODEL: nvidia/Nemotron-3-Embed-1B-BF16
+      INGEST_PARENT_COLLECTION: regs_parents_nem1b
+      INGEST_PARENT_DB: /raid/workspace/jaehyun/infra/rag_parents.db
     # mineru CLI(etl extra)는 구 이미지에 없어 기동 시 설치(이미지 재빌드 전 임시 심)
     command:
       ["bash", "-c",

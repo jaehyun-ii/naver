@@ -74,8 +74,112 @@ def _payload(row: dict, order: int) -> dict:
     }
 
 
+def _qdrant_url(url: str | None) -> str:
+    """설정(LLMOPS_QDRANT__URL) 우선 해석 — localhost 하드코딩이 컨테이너에서
+    Errno 99로 죽는 문제(e2e 실측) 방지."""
+    if url:
+        return url
+    try:
+        from llmops_core.common.config import get_settings
+        return get_settings().qdrant.url or "http://localhost:6333"
+    except Exception:  # noqa: BLE001
+        return "http://localhost:6333"
+
+
+def _doc_embedder():
+    """문서측 임베더 — 비대칭 모델(Nemotron)의 document 프롬프트 적용.
+
+    서빙 재인덱싱(reindex_nem1b)과 동일 조건: 모델에 document/passage 프롬프트가
+    있으면 적용해 질의측(query 프롬프트)과 비대칭을 맞춘다(+5pp 실측).
+    미가용(dev)이면 rag 기본 임베더(해시)로 폴백."""
+    from llmops_core.common.config import get_settings
+
+    cfg = get_settings().rag
+    if cfg.embedder in ("bge-m3", "st"):
+        from sentence_transformers import SentenceTransformer
+
+        m = SentenceTransformer(cfg.embedding_model, trust_remote_code=True)
+        kw = {}
+        for name in ("document", "passage"):
+            if getattr(m, "prompts", None) and name in (m.prompts or {}):
+                kw = {"prompt_name": name}
+                break
+
+        class _Doc:
+            dim = int(m.get_sentence_embedding_dimension())
+
+            @staticmethod
+            def encode(texts):
+                vecs = m.encode(texts, normalize_embeddings=True,
+                                batch_size=16, **kw)
+                return [list(map(float, v)) for v in vecs]
+
+        return _Doc()
+    from llmops_core.rag.embedder import make_embedder
+    return make_embedder()
+
+
+def vectorize_parents(chunks_path: str | Path, collection: str, *,
+                      qdrant_url: str | None = None, parent_db: str | None = None,
+                      embedder=None) -> dict:
+    """parent(조 단위) 직접 인덱스 적재 — 서빙 검색 스택(parent-직접) 정합.
+
+    payload는 서빙 ParentQdrantStore 규약(parent_chunk_id·publisher)을 따르고,
+    본문은 parent_db(sqlite 사이드카)에 upsert해 서빙이 하이드레이션한다.
+    """
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import (Distance, FieldCondition, Filter,
+                                      FilterSelector, MatchValue, PointStruct,
+                                      VectorParams)
+
+    rows = [json.loads(l) for l in Path(chunks_path).read_text(encoding="utf-8").splitlines() if l.strip()]
+    parents = [r for r in rows if r.get("chunk_level") == "parent"
+               and (r.get("content") or "").strip()]
+    if not parents:
+        return {"collection": collection, "n_parents": 0}
+    texts = [" > ".join(r.get("section_path") or []) + "\n" + (r.get("content") or "")
+             for r in parents]
+    embedder = embedder or _doc_embedder()
+    vecs = embedder.encode(texts)
+
+    client = QdrantClient(url=_qdrant_url(qdrant_url))
+    existing = {c.name for c in client.get_collections().collections}
+    if collection not in existing:
+        client.create_collection(
+            collection_name=collection,
+            vectors_config=VectorParams(size=embedder.dim, distance=Distance.COSINE))
+    doc_id = parents[0].get("doc_id")
+    client.delete(collection, points_selector=FilterSelector(filter=Filter(
+        must=[FieldCondition(key="doc_id", match=MatchValue(value=doc_id))])))
+    points = [PointStruct(
+        id=str(uuid.uuid5(_NAMESPACE, f"{collection}:{r['chunk_id']}")),
+        vector=v,
+        payload={"parent_chunk_id": r["chunk_id"], "doc_id": doc_id,
+                 "publisher": _publisher_code(r.get("publisher", "")),
+                 "section_path": " > ".join(r.get("section_path") or [])})
+        for r, v in zip(parents, vecs)]
+    for i in range(0, len(points), 256):
+        client.upsert(collection, points[i:i + 256])
+
+    if parent_db:  # 본문 사이드카 upsert(서빙 하이드레이션 소스)
+        import sqlite3
+
+        con = sqlite3.connect(parent_db)
+        con.execute("""CREATE TABLE IF NOT EXISTS parents (
+            chunk_id TEXT PRIMARY KEY, doc_id TEXT, article_no TEXT,
+            article_title TEXT, section_path TEXT, content TEXT)""")
+        con.executemany(
+            "INSERT OR REPLACE INTO parents VALUES (?,?,?,?,?,?)",
+            [(r["chunk_id"], doc_id, r.get("article_no"), r.get("article_title"),
+              " > ".join(r.get("section_path") or []), r.get("content") or "")
+             for r in parents])
+        con.commit()
+        con.close()
+    return {"collection": collection, "n_parents": len(points)}
+
+
 def vectorize_chunks(chunks_path: str | Path, collection: str, *,
-                     qdrant_url: str = "http://localhost:6333", embedder=None) -> dict:
+                     qdrant_url: str | None = None, embedder=None) -> dict:
     from qdrant_client import QdrantClient
     from qdrant_client.models import Distance, PointStruct, VectorParams
 
@@ -99,7 +203,7 @@ def vectorize_chunks(chunks_path: str | Path, collection: str, *,
     embedder = embedder or make_embedder()
     vecs = embedder.encode(texts)
 
-    client = QdrantClient(url=qdrant_url)
+    client = QdrantClient(url=_qdrant_url(qdrant_url))
     existing = {c.name for c in client.get_collections().collections}
     if collection not in existing:
         client.create_collection(
