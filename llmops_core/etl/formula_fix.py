@@ -197,6 +197,17 @@ def normalize_equations_spacing(content_list: list[dict]) -> int:
     return changed
 
 
+_PLAIN_MATH = re.compile(r"[=<>≤≥]|\d\s*[+\-×x*/^]\s*\d")
+
+
+def _is_plain_math(text: str) -> bool:
+    """평문 수학 표기 — 등호/연산자 있고 스크램블 아니며 어휘가 자연스러운 경우."""
+    t = (text or "").strip()
+    if not t or len(t) < 4 or _looks_scrambled(t):
+        return False
+    return bool(_PLAIN_MATH.search(t))
+
+
 def rerecognize_equations(pdf_path: Path, content_list: list[dict], *,
                           endpoint: str, model: str, zoom: float = 3.0) -> dict:
     """content_list의 비-LaTeX equation 블록을 재인식(in-place). 통계 반환."""
@@ -214,20 +225,31 @@ def rerecognize_equations(pdf_path: Path, content_list: list[dict], *,
                           model_name=model)
     doc = pymupdf.open(str(pdf_path))
     for b in bad:
-        try:
-            page = doc[b["page_idx"]]
-            r = pymupdf.Rect(b["bbox"])
-            r = pymupdf.Rect(max(0, r.x0 - _PAD), max(0, r.y0 - _PAD),
-                             r.x1 + _PAD, r.y1 + _PAD)
-            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=r)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            out = str(client.content_extract(img, type="equation") or "").strip()
-        except Exception:  # noqa: BLE001 — 블록 단위 실패는 마크 후 계속
-            out = ""
+        out = ""
+        # 다단 시도 — 얇은 인라인 블록(h≤20pt)은 저배율 크롭 인식 실패가 흔해
+        # 배율·패딩을 올려 재시도한다(실측: 11편 실패 96건 다수가 h 13~16pt).
+        for z, pad in ((zoom, _PAD), (4.5, 12)):
+            try:
+                page = doc[b["page_idx"]]
+                r = pymupdf.Rect(b["bbox"])
+                r = pymupdf.Rect(max(0, r.x0 - pad), max(0, r.y0 - pad),
+                                 r.x1 + pad, r.y1 + pad)
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(z, z), clip=r)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                out = str(client.content_extract(img, type="equation") or "").strip()
+            except Exception:  # noqa: BLE001 — 블록 단위 실패는 마크 후 계속
+                out = ""
+            if out and _is_latex(out) and _balanced(out):
+                break
         if out and _is_latex(out) and _balanced(out):
             b["text"] = out
             b["text_format"] = "latex"
             stats["fixed"] += 1
+        elif _is_plain_math(b.get("text", "")):
+            # 평문 수학 표기(Fb=(6075(L/100)–… 류)는 읽을 수 있는 정상 추출 —
+            # 실패 마크 대신 평문 유지(검색·근거 사용 가능).
+            b["formula_plain"] = True
+            stats["plain"] = stats.get("plain", 0) + 1
         else:
             b["formula_reco_failed"] = True
             stats["failed"] += 1

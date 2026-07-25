@@ -99,6 +99,8 @@ def sanitize_captions(content_list: list[dict]) -> int:
 # 캡션 결속 패턴 — 그림 제목(아래형) / 번호형 표제(위형, 부록 1-14) / 표 머리글 오염
 _FIG_TITLE = re.compile(r"^(그림|Fig\.?)\s*[\d.\-]+")
 _NUM_HEAD = re.compile(r"^\d{1,3}[.)]\s*\S")
+_TBL_TITLE = re.compile(r"^표\s*[\d\-.]+\s*\S")      # 표 스크린샷 이미지의 제목
+_EN_TITLE = re.compile(r"^[A-Z][A-Z0-9 /&'()\-]{4,50}$")  # SURVEY PROGRAMME 류
 _TBL_HEAD = re.compile(r"^표\s*[\d\-.]+[^그림]{0,60}(\(계속\))?\s*")
 
 
@@ -146,7 +148,8 @@ def bind_captions(content_list: list[dict]) -> dict:
                 break
             t = (pb.get("text") or "").strip()
             if (pb.get("type") == "text" and t and len(t) <= 70
-                    and (_NUM_HEAD.match(t) or _FIG_TITLE.match(t))
+                    and (_NUM_HEAD.match(t) or _FIG_TITLE.match(t)
+                         or _TBL_TITLE.match(t) or _EN_TITLE.match(t))
                     and not _SENT_END.search(t)):
                 b["image_caption"] = [t]
                 pb["_consumed_as_caption"] = True
@@ -283,5 +286,19 @@ def reanalyze_images(pdf_path: Path, content_list: list[dict], *,
         else:
             b["image_analysis_failed"] = True
             stats["failed"] += 1
+    # 합성 캡션 — 결속·원본 캡션이 없지만 분석 설명이 있는 그림은 설명 첫
+    # 문장(≤60자)을 캡션으로 부여(caption_synthesized 마크). 양식 스크린샷·
+    # 무제 도판도 하류(그림 주입·figure_qa)에서 지칭 가능해진다.
+    for b in content_list:
+        if b.get("type") != "image" or _caption_of(b):
+            continue
+        content = str(b.get("content") or "").strip()
+        if len(content) < _MIN_DESC:
+            continue
+        first = re.split(r"(?<=[.다])\s", content)[0][:60].strip()
+        if len(first) >= 8:
+            b["image_caption"] = [first]
+            b["caption_synthesized"] = True
+            stats["caption_synth"] = stats.get("caption_synth", 0) + 1
     doc.close()
     return stats
