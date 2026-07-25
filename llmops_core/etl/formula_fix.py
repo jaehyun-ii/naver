@@ -25,6 +25,91 @@ def _balanced(text: str) -> bool:
     return text.count("{") == text.count("}") and "{}" not in text.replace("{ }", "{}")
 
 
+# 스크램블 시그니처 — PDF 텍스트 레이어 순서로 뒤섞인 수식("sagwv prob wvvwv b
+# hogwv … M CBLCffM"): 짧은 라틴 토큰이 5개 이상 연속, LaTeX 마커 없음.
+_SCRAMBLE = re.compile(r"(?:\b[A-Za-z]{1,8}\s+){5,}[A-Za-z]{1,8}\b")
+# where-절(변수 정의부) 시그니처 — equation 오검출 블록: 한글 + 콜론 정의 행
+_WHERE_CLAUSE = re.compile(r"[가-힣].*[:：]|[:：].*[가-힣]")
+
+
+def _looks_scrambled(text: str) -> bool:
+    if "\\" in text or "$" in text:
+        return False
+    m = _SCRAMBLE.search(text)
+    if not m:
+        return False
+    # 정상 영문 문장 오탐 방지: 매치 구간의 평균 토큰 길이가 짧고(기호 나열),
+    # 모음 비율이 낮으면 스크램블로 판단
+    seg = m.group(0)
+    toks = seg.split()
+    avg = sum(len(t) for t in toks) / len(toks)
+    vowels = sum(c in "aeiouAEIOU" for c in seg)
+    ratio = vowels / max(1, len(seg.replace(" ", "")))
+    # 정상 영문은 관사·전치사 등 기능어를 반드시 포함한다 — 기호 나열엔 없음
+    stop = {"the", "of", "and", "to", "in", "with", "shall", "be", "for", "is",
+            "are", "on", "by", "or", "as", "at", "this", "that"}
+    has_stop = any(t.lower() in stop for t in toks)
+    return avg <= 4.5 and not has_stop and ratio < 0.38
+
+
+def rerecognize_scrambled_text(pdf_path: Path, content_list: list[dict], *,
+                               endpoint: str, model: str, zoom: float = 3.0) -> dict:
+    """수식이 text 블록으로 뒤섞여 저장된 경우(2014판 실측) bbox 재추출로 교체.
+
+    equation 미검출 스크램블은 '없는 것보다 나쁜'(검색되지만 틀린) 상태 —
+    블록 bbox를 VLM text 태스크로 재추출해 원문 순서·인라인 수식을 복원한다.
+    where-절 오검출 equation(한글+콜론 정의부, 기호 소실)도 같은 방식으로
+    text 재추출해 변수 기호를 되살린다.
+    """
+    targets = []
+    for b in content_list:
+        t = b.get("text") or ""
+        if b.get("type") == "text" and _looks_scrambled(t):
+            targets.append((b, "scramble"))
+        elif (b.get("type") == "equation" and _WHERE_CLAUSE.search(t)
+              and t.count("\n") + t.count(":") >= 2 and not b.get("formula_reco_failed")):
+            targets.append((b, "where_clause"))
+    stats = {"scramble": sum(1 for _, k in targets if k == "scramble"),
+             "where_clause": sum(1 for _, k in targets if k == "where_clause"),
+             "fixed": 0, "failed": 0}
+    if not targets:
+        return stats
+    import pymupdf
+    from PIL import Image
+    from mineru_vl_utils import MinerUClient
+
+    client = MinerUClient(backend="http-client", server_url=endpoint.rstrip("/"),
+                          model_name=model)
+    doc = pymupdf.open(str(pdf_path))
+    for b, kind in targets:
+        try:
+            page = doc[b["page_idx"]]
+            r = pymupdf.Rect(b["bbox"])
+            r = pymupdf.Rect(max(0, r.x0 - _PAD), max(0, r.y0 - _PAD),
+                             r.x1 + _PAD, r.y1 + _PAD)
+            pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), clip=r)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            out = str(client.content_extract(img, type="text") or "").strip()
+        except Exception:  # noqa: BLE001
+            out = ""
+        ok = bool(out) and len(out) >= 10
+        if ok and kind == "scramble":
+            ok = not _looks_scrambled(out)  # 재추출도 뒤섞이면 실패 처리
+        if ok and kind == "where_clause":
+            ok = ":" in out or "：" in out
+        if ok:
+            b["text"] = out
+            if kind == "where_clause":
+                b["type"] = "text"  # 정의부는 산문 — 청커가 본문으로 취급
+            b[f"{kind}_fixed"] = True
+            stats["fixed"] += 1
+        else:
+            b[f"{kind}_reco_failed"] = True
+            stats["failed"] += 1
+    doc.close()
+    return stats
+
+
 _HANGUL = re.compile(r"[가-힣]$")
 _HANGUL_S = re.compile(r"^[가-힣]")
 _CMD_END = re.compile(r"\\[a-zA-Z]+$")

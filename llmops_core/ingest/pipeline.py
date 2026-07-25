@@ -96,6 +96,14 @@ def process_document(doc_id: str) -> Document:
             doc.chunks_key = ck_key
 
             # 6) Qdrant 벡터 적재(child·표·그림만)
+            # 통합본은 분권과 내용 중복(실측 표본 411/500)이라 색인 제외 —
+            # 검색 이중 히트 방지. 청크 산출물은 정상 보존된다.
+            if "통합본" in (doc.name or ""):
+                doc.status = STATUS_PROCESSED
+                doc.updated_at = time.time()
+                reg.save(doc)
+                logger.info("통합본 색인 제외: %s (chunks=%d)", doc.name, doc.n_chunks)
+                return doc
             collection = _collection()
             vres = vectorize_chunks(chunks, collection)
             doc.vector_collection = collection

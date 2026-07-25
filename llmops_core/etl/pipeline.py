@@ -90,8 +90,12 @@ def run_etl(pdf_path: Path, out_root: Path, cfg: EtlConfig | None = None, *, nam
             cl = _json.loads(cl_path.read_text(encoding="utf-8"))
             from .formula_fix import normalize_equations_spacing
 
+            from .formula_fix import rerecognize_scrambled_text
+
             fx = rerecognize_equations(pdf_path, cl, endpoint=cfg.endpoint,
                                        model=cfg.model)
+            fx["scramble"] = rerecognize_scrambled_text(
+                pdf_path, cl, endpoint=cfg.endpoint, model=cfg.model)
             fx["spacing_normalized"] = normalize_equations_spacing(cl)
             report["formula_fix"] = fx
             tx = {}

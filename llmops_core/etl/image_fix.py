@@ -34,6 +34,15 @@ def _caption_of(block: dict) -> str:
     return str(cap or "").strip()
 
 
+_MERMAID = re.compile(r"```\s*mermaid|graph\s+(TD|LR|RL|BT)\b|flowchart\s+(TD|LR)")
+
+
+def _is_confabulated(text: str) -> bool:
+    """VLM이 도면과 무관한 mermaid 그래프를 창작한 출력(실측 68건) 감지."""
+    t = text or ""
+    return bool(_MERMAID.search(t)) or t.count("-->") >= 2
+
+
 def _desc_len(block: dict) -> int:
     cap = _caption_of(block)
     content = str(block.get("content") or "").strip()
@@ -235,7 +244,9 @@ def reanalyze_images(pdf_path: Path, content_list: list[dict], *,
     n_noise = drop_noise_images(content_list)
     n_merged = merge_fragmented_images(content_list)
     weak = [b for b in content_list
-            if b.get("type") == "image" and _desc_len(b) < _MIN_DESC]
+            if b.get("type") == "image"
+            and (_desc_len(b) < _MIN_DESC
+                 or _is_confabulated(str(b.get("content") or "")))]
     stats = {"images": sum(1 for b in content_list if b.get("type") == "image"),
              "caption_cleaned": n_clean, "caption_bound": bind, "noise_dropped": n_noise, "merged": n_merged, "weak": len(weak), "fixed": 0, "failed": 0}
     if not weak:
@@ -264,6 +275,8 @@ def reanalyze_images(pdf_path: Path, content_list: list[dict], *,
         except Exception:  # noqa: BLE001 — 블록 단위 실패는 마크 후 계속
             desc = ""
         cap = _caption_of(b)
+        if _is_confabulated(desc):
+            desc = ""  # 재분석도 허구 그래프면 폐기
         if len(desc.replace(cap, "").strip()) >= _MIN_DESC:
             b["content"] = f"{cap}\n{desc}".strip() if cap else desc
             stats["fixed"] += 1
