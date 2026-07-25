@@ -20,11 +20,11 @@ import hashlib
 import json
 import re
 
-from .common import (CHUNK_DIR, _attach_tables, _is_requirement_parent,
+from .common import (CHUNK_DIR, _attach_figures, _attach_tables, _is_requirement_parent,
                      glob_docs, nfc)
 
 # 특성 트랙(희소 우선 배정 대상) — 순서는 빈도 동률일 때의 우선순위
-TRACKS = ["precedence", "def_link", "unit_convert", "table_lookup",
+TRACKS = ["precedence", "def_link", "formula_calc", "figure_qa", "table_lookup",
           "hierarchy", "crossref"]
 # 특성 없는 조의 fallback — 해시 패리티로 교대
 FALLBACKS = ("spec", "applicability")
@@ -141,6 +141,32 @@ def find_def_link(r: dict, terms: dict[str, dict],
                 return aux
             continue  # 참조 미해소 — 이 용어는 스킵, 다음 용어 시도
     return None
+
+
+# ── formula_calc: 유효 $$수식$$ 보유 조 (v2a — unit_convert 대체) ────────
+_FORMULA_BLOCK = re.compile(r"\$\$(.+?)\$\$", re.S)
+
+
+def find_formula(r: dict) -> dict | None:
+    """조 본문의 유효 LaTeX 수식 — 재인식 실패 마크 없는 $$블록만."""
+    content = r.get("content") or ""
+    formulas = [m.group(0).strip() for m in _FORMULA_BLOCK.finditer(content)
+                if len(m.group(1).strip()) >= 5][:3]
+    if not formulas:
+        return None
+    return {"formulas": formulas}
+
+
+def find_figure_block(r: dict) -> dict | None:
+    """[인용된 그림] 블록 보유 조 — 설명이 실질(60자 이상)일 때만."""
+    content = r.get("content") or ""
+    i = content.find("[인용된 그림]")
+    if i < 0:
+        return None
+    block = content[i:i + 2500]
+    if len(block) < 60 + len("[인용된 그림]"):
+        return None
+    return {"figure_block": block}
 
 
 # ── unit_convert: 환산 가능 단위 기준값 ─────────────────────────────────
@@ -617,13 +643,16 @@ def route_corpus(publisher: str = "KR", min_tokens: int = 100,
     guide_xdoc: dict[tuple[str, str], list[dict]] = {}
     name_index: dict[str, dict[tuple[str, str], list[dict]]] = {}
     for f in glob_docs(CHUNK_DIR / publisher, doc_glob):
-        parents, tables = [], {}
+        parents, tables, figures = [], {}, {}
         for l in f.open(encoding="utf-8"):
-            if '"parent"' not in l and '"table"' not in l:
+            if ('"parent"' not in l and '"table"' not in l
+                    and '"figure"' not in l):
                 continue
             r = json.loads(l)
             if r.get("chunk_type") == "table":
                 tables[r["chunk_id"]] = r
+            elif r.get("chunk_type") == "figure":
+                figures[r["chunk_id"]] = r
             elif r.get("chunk_level") == "parent":
                 r["publisher"], r["_source_file"] = publisher, nfc(f.stem)
                 parents.append(r)
@@ -645,6 +674,7 @@ def route_corpus(publisher: str = "KR", min_tokens: int = 100,
         # 있어, 대상 조만 병합하면 참조 텍스트의 빈 자리를 LLM이 외부지식으로
         # 메우는 환각이 생긴다(실측: C1 계수 표 누락 → 값 날조).
         _attach_tables(rule_side, tables)
+        _attach_figures(rule_side, figures)
         terms = extract_terms([p for p in rule_side
                                if DEF_TITLE.search(p.get("article_title") or "")])
         by_no: dict[str, list[dict]] = {}
@@ -669,7 +699,8 @@ def route_corpus(publisher: str = "KR", min_tokens: int = 100,
             feats = {
                 "precedence": find_precedence(r, by_no),
                 "def_link": find_def_link(r, terms, by_no),
-                "unit_convert": find_unit_threshold(r),
+                "formula_calc": find_formula(r),
+                "figure_qa": find_figure_block(r),
                 "table_lookup": find_table(r),
                 "hierarchy": find_hierarchy(r),
                 "crossref": find_crossref(r, by_no, by_ch_no, guide_by_ch_no),

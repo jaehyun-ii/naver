@@ -43,7 +43,8 @@ TRACK_FILES = {
     "crossref": ("crossref_qa.jsonl", "상호참조 해석형"),
     "def_link": ("def_link_qa.jsonl", "정의 결합형"),
     "precedence": ("precedence_qa.jsonl", "일반·특별 우선형"),
-    "unit_convert": ("unit_convert_qa.jsonl", "단위 환산 판정형"),
+    "formula_calc": ("formula_calc_qa.jsonl", "수식 계산형"),
+    "figure_qa": ("figure_qa.jsonl", "그림 근거형"),
     "table_lookup": ("table_lookup_qa.jsonl", "표 참조형"),
     "hierarchy": ("hierarchy_qa.jsonl", "조항호목 구조형"),
 }
@@ -830,9 +831,72 @@ def gen_hierarchy(rule: dict, aux: dict, feedback: str = "") -> dict:
     return row
 
 
+
+# ── formula_calc — 수식 대입 계산형 (v2a, unit_convert 대체) ────────────
+def gen_formula_calc(rule: dict, aux: dict | None, feedback: str = "") -> dict | None:
+    obj = chat_json(prompts.FORMULA_CALC_QA.format(
+        rule_card=card_json(rule), article_text=rule["content"])
+        + feedback, max_tokens=2400)
+    q, ans = obj.get("question"), obj.get("answer")
+    if not q or not ans:
+        return None
+    steps = [str(x) for x in (obj.get("answer_steps") or [])]
+    f_latex = (obj.get("formula_latex") or "").strip()
+    fv = str(obj.get("final_value") or "").strip()
+    judgment = (obj.get("judgment") or "").strip()
+    joined = ans + "\n" + "\n".join(steps)
+    flags = []
+    # 게이트: 수식 원문 실존 / 최종값 답변 포함 / 판정 시 부등호 명시
+    if not f_latex or norm(f_latex) not in norm(rule["content"]):
+        flags.append("formula_not_in_source")
+    if fv and fv.replace(",", "") not in joined.replace(",", ""):
+        flags.append("final_value_missing")
+    if judgment in ("충족", "미충족") and not re.search(r"[<>≤≥]", joined):
+        flags.append("inequality_missing")
+    row = base_row(rule, "formula_calc", "FORMULA_CALC_QA")
+    row.update({
+        "question": anchor_question(q, rule),
+        "gold_answer": ans,
+        "expected_judgment": {"충족": "compliant",
+                              "미충족": "non_compliant"}.get(judgment),
+        "evidence": [evidence_entry(rule, obj.get("evidence_quote", ""))],
+        "needs_review": bool(flags) or not quote_in(
+            obj.get("evidence_quote", ""), rule["content"]),
+        "metadata": {**row["metadata"], "given": obj.get("given") or {},
+                     "formula_latex": f_latex, "final_value": fv,
+                     "final_unit": obj.get("final_unit", ""),
+                     "gate_flags": flags}})
+    return row
+
+
+# ── figure_qa — 그림 근거형 (v2a 신설) ──────────────────────────────────
+def gen_figure_qa(rule: dict, aux: dict | None, feedback: str = "") -> dict | None:
+    obj = chat_json(prompts.FIGURE_QA.format(
+        rule_card=card_json(rule), article_text=rule["content"])
+        + feedback, max_tokens=1800)
+    q, ans = obj.get("question"), obj.get("answer")
+    if not q or not ans:
+        return None
+    fref = (obj.get("figure_ref") or "").strip()
+    flags = []
+    if not fref or norm(fref)[:20] not in norm(rule["content"]):
+        flags.append("figure_ref_not_in_source")
+    row = base_row(rule, "figure_qa", "FIGURE_QA")
+    row.update({
+        "question": anchor_question(q, rule),
+        "gold_answer": ans,
+        "evidence": [evidence_entry(rule, obj.get("evidence_quote", ""))],
+        "needs_review": bool(flags) or not quote_in(
+            obj.get("evidence_quote", ""), rule["content"]),
+        "metadata": {**row["metadata"], "figure_ref": fref,
+                     "gate_flags": flags}})
+    return row
+
+
 GEN = {"spec": gen_spec, "applicability": gen_applicability,
        "crossref": gen_crossref, "def_link": gen_def_link,
-       "precedence": gen_precedence, "unit_convert": gen_unit_convert,
+       "precedence": gen_precedence, "formula_calc": gen_formula_calc,
+       "figure_qa": gen_figure_qa,
        "table_lookup": gen_table_lookup, "hierarchy": gen_hierarchy}
 
 
@@ -1092,7 +1156,10 @@ def _static_reasons(row: dict) -> list[str]:
         reasons.append("discretionary_override")  # 재량 규정을 확정 배제로 결론
     # 답변의 판정이 그림에 의존 — 그림은 evidence에 실릴 수 없어 검증 불가
     # (전문가 검수 6차: 그림 3·4 없이 모델링 결과 확정한 행이 ACCEPT됨)
-    if re.search(r"그림\s*\d", row.get("gold_answer") or ""):
+    if (row.get("track") != "figure_qa"
+            and re.search(r"그림\s*\d", row.get("gold_answer") or "")
+            and "[인용된 그림]" not in ((row.get("evidence") or [{}])[0]
+                                        .get("article_text") or "")):
         reasons.append("figure_dependent")
     # 재량 완화 단서 조항의 미충족 **단정** — 단서 성립 여부에 따라 결론이 갈려
     # 유일 판정 불가. 답변이 단서를 명시(조건부 서술)하면 정상, 단정하면 검수행.
@@ -1204,7 +1271,7 @@ def _claim_falsified(issues: list[str], row: dict) -> str | None:
 # 콜 낭비와 필연 REJECT를 예방한다(1차 수율 개선 — 검수 9차 #8 실측 유형).
 _FIGURE_BOUND = re.compile(
     r"그림\s*\d[\d.]*(?:\s*및\s*그림\s*\d[\d.]*)?\s*에\s*(?:따라|의하여|나타낸)")
-_JUDGMENT_TRACKS = {"applicability", "hierarchy", "precedence", "unit_convert"}
+_JUDGMENT_TRACKS = {"applicability", "hierarchy", "precedence", "formula_calc"}
 
 
 def gen_verified(track: str, rule: dict, aux: dict | None,
@@ -1217,7 +1284,8 @@ def gen_verified(track: str, rule: dict, aux: dict | None,
     끝까지 REJECT면 폐기하지 않고 검수 큐(REJECT)로 남긴다.
     """
     from .verify_suite import verify_row  # 지연 임포트(순환 방지)
-    if track in _JUDGMENT_TRACKS and _FIGURE_BOUND.search(rule.get("content", "")):
+    if (track in _JUDGMENT_TRACKS and _FIGURE_BOUND.search(rule.get("content", ""))
+            and "[인용된 그림]" not in rule.get("content", "")):
         log(f"  [{track}] 그림 위임 조항 — 생성 전 스킵: "
             f"{rule.get('chunk_id', '')[-40:]}")
         return None, None
