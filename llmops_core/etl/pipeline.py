@@ -88,9 +88,20 @@ def run_etl(pdf_path: Path, out_root: Path, cfg: EtlConfig | None = None, *, nam
                         "content_list.json", ("content_list_v2.json",))
         if cl_path:
             cl = _json.loads(cl_path.read_text(encoding="utf-8"))
+            from .formula_fix import normalize_equations_spacing
+
             fx = rerecognize_equations(pdf_path, cl, endpoint=cfg.endpoint,
                                        model=cfg.model)
+            fx["spacing_normalized"] = normalize_equations_spacing(cl)
             report["formula_fix"] = fx
+            tx = {}
+            if cfg.table_enabled:
+                from .table_fix import recover_lost_tables
+
+                tx = recover_lost_tables(pdf_path, cl, endpoint=cfg.endpoint,
+                                         model=cfg.model,
+                                         images_dir=cl_path.parent / "images")
+                report["table_fix"] = tx
             gx = {}
             if cfg.image_analysis:
                 from .image_fix import reanalyze_images
@@ -98,8 +109,10 @@ def run_etl(pdf_path: Path, out_root: Path, cfg: EtlConfig | None = None, *, nam
                 gx = reanalyze_images(pdf_path, cl, endpoint=cfg.endpoint,
                                       model=cfg.model)
                 report["image_fix"] = gx
-            if (fx["fixed"] or fx["failed"]
-                    or gx.get("fixed") or gx.get("failed")):
+            if (fx["fixed"] or fx["failed"] or fx.get("spacing_normalized") or tx.get("lost")
+                    or gx.get("fixed") or gx.get("failed")
+                    or gx.get("caption_cleaned") or gx.get("merged")
+                    or gx.get("noise_dropped")):
                 cl_path.write_text(_json.dumps(cl, ensure_ascii=False),
                                    encoding="utf-8")
 

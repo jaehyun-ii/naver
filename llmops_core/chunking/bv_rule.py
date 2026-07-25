@@ -282,7 +282,7 @@ class Chunker:
                         or (not cap.strip() and page in toc_pages)):
                     st["tables"].append((x, len(st["pieces"])))
                 continue
-            if typ == "image":
+            if typ in ("image", "chart"):
                 st["figures"].append((x, len(st["pieces"])))
                 continue
             if typ == "equation":

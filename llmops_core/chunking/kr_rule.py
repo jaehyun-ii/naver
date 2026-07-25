@@ -323,7 +323,7 @@ class Chunker:
                 continue
             if typ == "table":                      # (원자, 앵커) — 원문 위치 인터리브용
                 st["tables"].append((x, len(st["pieces"]))); continue
-            if typ == "image":
+            if typ in ("image", "chart"):
                 st["figures"].append((x, len(st["pieces"]))); continue
             if typ == "equation":
                 eq = (x.get("text") or "").strip()
@@ -506,7 +506,7 @@ class Chunker:
             if typ == "table":                      # (원자, 앵커=지금까지의 piece 수 → 원문 위치)
                 st["tables"].append((x, len(st["pieces"])))
                 continue
-            if typ == "image":
+            if typ in ("image", "chart"):
                 st["figures"].append((x, len(st["pieces"])))
                 continue
             if typ == "equation":

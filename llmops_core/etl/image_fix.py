@@ -87,6 +87,100 @@ def sanitize_captions(content_list: list[dict]) -> int:
     return cleaned
 
 
+# 캡션 결속 패턴 — 그림 제목(아래형) / 번호형 표제(위형, 부록 1-14) / 표 머리글 오염
+_FIG_TITLE = re.compile(r"^(그림|Fig\.?)\s*[\d.\-]+")
+_NUM_HEAD = re.compile(r"^\d{1,3}[.)]\s*\S")
+_TBL_HEAD = re.compile(r"^표\s*[\d\-.]+[^그림]{0,60}(\(계속\))?\s*")
+
+
+def bind_captions(content_list: list[dict]) -> dict:
+    """빈 캡션 이미지에 인접 text 블록 표제 결속 + 표 머리글 오염 제거 + 과병합 이관.
+
+    실측(1편_2025): 빈 캡션 80/152 중 다수는 PDF에 캡션 실재 —
+    ① 그림 '아래' 「그림 N …」 제목 미결속  ② 그림 '위' 번호형 표제(부록 1-14) 미결속
+    ③ 표 프레임 머리글("표 3-1 …")이 캡션에 흡수  ④ 첫 그림이 다음 그림 표제까지 과병합.
+    """
+    stats = {"bound_below": 0, "bound_above": 0, "table_head_stripped": 0,
+             "title_redistributed": 0}
+    n = len(content_list)
+    for i, b in enumerate(content_list):
+        if b.get("type") != "image":
+            continue
+        cap = _caption_of(b)
+        # ③ 표 머리글 오염 제거 — "표 N-N …"으로 시작하면 그 구간을 벗겨낸다
+        m_t = _TBL_HEAD.match(cap)
+        if m_t and m_t.end() > 4:
+            rest = cap[m_t.end():].strip()
+            b["image_caption"] = [rest] if rest else []
+            cap = rest
+            stats["table_head_stripped"] += 1
+        if cap:
+            continue
+        pg = b.get("page_idx", 0)
+        # ① 아래 「그림 N …」 제목 결속
+        for j in range(i + 1, min(i + 3, n)):
+            nb = content_list[j]
+            if nb.get("page_idx", 0) != pg or nb.get("type") == "image":
+                break
+            t = (nb.get("text") or "").strip()
+            if nb.get("type") == "text" and t and len(t) <= 90 and _FIG_TITLE.match(t):
+                b["image_caption"] = [t]
+                nb["_consumed_as_caption"] = True
+                stats["bound_below"] += 1
+                break
+        if _caption_of(b):
+            continue
+        # ② 위 번호형 표제 결속(짧고 문장형이 아닌 직전 text)
+        for j in range(i - 1, max(i - 3, -1), -1):
+            pb = content_list[j]
+            if pb.get("page_idx", 0) != pg or pb.get("type") == "image":
+                break
+            t = (pb.get("text") or "").strip()
+            if (pb.get("type") == "text" and t and len(t) <= 70
+                    and (_NUM_HEAD.match(t) or _FIG_TITLE.match(t))
+                    and not _SENT_END.search(t)):
+                b["image_caption"] = [t]
+                pb["_consumed_as_caption"] = True
+                stats["bound_above"] += 1
+                break
+    # ④ 과병합 이관 — 캡션에 제목 마커 2개 + 다음 이미지 캡션이 빈 경우 분배
+    imgs = [b for b in content_list if b.get("type") == "image"]
+    for a, c in zip(imgs, imgs[1:]):
+        if a.get("page_idx") != c.get("page_idx") and \
+           (a.get("page_idx", 0) + 1) != c.get("page_idx", 0):
+            continue
+        cap = _caption_of(a)
+        marks = list(_TITLE_MARK.finditer(cap))
+        if len(marks) >= 2 and not _caption_of(c):
+            a["image_caption"] = [cap[:marks[1].start()].strip()]
+            c["image_caption"] = [cap[marks[1].start():].strip()]
+            stats["title_redistributed"] += 1
+    # 캡션으로 소비된 text 블록 제거
+    content_list[:] = [b for b in content_list if not b.get("_consumed_as_caption")]
+    return stats
+
+
+# 노이즈 그림 필터 — 로고·장식·sliver (실측: 닻 기호 19×13px, 파형 조각 등)
+_NOISE_MIN_W = 22
+_NOISE_MIN_H = 16
+_NOISE_MIN_AREA = 900.0
+
+
+def drop_noise_images(content_list: list[dict]) -> int:
+    """극소 bbox image 블록 제거(캡션 있는 것은 보존). 제거 수 반환."""
+    drop = []
+    for b in content_list:
+        if b.get("type") != "image" or not b.get("bbox") or _caption_of(b):
+            continue
+        x0, y0, x1, y1 = b["bbox"]
+        w, h = x1 - x0, y1 - y0
+        if w < _NOISE_MIN_W or h < _NOISE_MIN_H or w * h < _NOISE_MIN_AREA:
+            drop.append(id(b))
+    if drop:
+        content_list[:] = [b for b in content_list if id(b) not in set(drop)]
+    return len(drop)
+
+
 _MERGE_GAP = 18      # 세로 인접 판단 간격(pt)
 _MERGE_XOVL = 0.6    # 가로 겹침 최소 비율
 
@@ -135,13 +229,15 @@ def merge_fragmented_images(content_list: list[dict]) -> int:
 
 def reanalyze_images(pdf_path: Path, content_list: list[dict], *,
                      endpoint: str, model: str, zoom: float = 3.0) -> dict:
-    """캡션 정화 → 조각 병합 → 설명 빈약 image 블록 재분석(in-place). 통계 반환."""
+    """캡션 정화·결속 → 노이즈 제거 → 조각 병합 → 빈약 설명 재분석(in-place)."""
     n_clean = sanitize_captions(content_list)
+    bind = bind_captions(content_list)
+    n_noise = drop_noise_images(content_list)
     n_merged = merge_fragmented_images(content_list)
     weak = [b for b in content_list
             if b.get("type") == "image" and _desc_len(b) < _MIN_DESC]
     stats = {"images": sum(1 for b in content_list if b.get("type") == "image"),
-             "caption_cleaned": n_clean, "merged": n_merged, "weak": len(weak), "fixed": 0, "failed": 0}
+             "caption_cleaned": n_clean, "caption_bound": bind, "noise_dropped": n_noise, "merged": n_merged, "weak": len(weak), "fixed": 0, "failed": 0}
     if not weak:
         return stats
     import pymupdf

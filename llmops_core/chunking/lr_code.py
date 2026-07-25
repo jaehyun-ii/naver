@@ -250,7 +250,7 @@ class Chunker:
             if typ == "table":
                 st["tables"].append((x, len(st["pieces"])))
                 continue
-            if typ == "image":
+            if typ in ("image", "chart"):
                 st["figures"].append((x, len(st["pieces"])))
                 continue
             if typ == "equation":                 # 수식은 직전 문단에 병합(단독이면 새 조각)

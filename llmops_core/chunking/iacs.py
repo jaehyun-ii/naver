@@ -239,7 +239,7 @@ class Chunker:
             if typ == "table":
                 st["tables"].append((x, len(st["pieces"])))
                 continue
-            if typ == "image":
+            if typ in ("image", "chart"):
                 st["figures"].append((x, len(st["pieces"])))
                 continue
             if typ == "equation":
