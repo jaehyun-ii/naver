@@ -252,9 +252,36 @@ SUITE_SOURCES = [
 # 판정형 트랙의 decision 한국어 — chosen/rejected 라벨 표기
 JUDGE_DECISION_KO = {"formula_calc": JUDGMENT_KO, "hierarchy": APPLIC_KO}
 
-SUITE_INSTR = ("당신은 선급 규정 전문가입니다. 아래 검색된 규정 조항들을 근거로 질문에 답하십시오.\n"
-               "반드시 근거 조항을 지목하고 원문을 인용하십시오. 제공된 조항으로 답할 수 없으면 "
-               "'제공된 조항으로는 답할 수 없다'고 답하십시오.")
+# 지시문 변형 풀 — 단일 고정 지시는 모델이 무시하도록 학습된다(입력 구조만
+# 트리거). 의미 동등 패러프레이즈를 순환해 지시 강건성을 확보하고, 일부는
+# 무지시(구조만)로 두어 서빙 프롬프트 변형에도 형식이 유지되게 한다.
+SUITE_INSTR_VARIANTS = [
+    ("당신은 선급 규정 전문가입니다. 아래 검색된 규정 조항들을 근거로 질문에 답하십시오.\n"
+     "반드시 근거 조항을 지목하고 원문을 인용하십시오. 제공된 조항으로 답할 수 없으면 "
+     "'제공된 조항으로는 답할 수 없다'고 답하십시오."),
+    ("선급 규정 검토 담당자로서, 검색된 조항만을 근거로 아래 질문에 답하라. "
+     "어느 문서의 어느 조항이 근거인지 명시하고 해당 원문을 그대로 인용할 것. "
+     "조항에 근거가 없으면 답할 수 없다고 밝혀라."),
+    ("다음은 규정 검색 결과입니다. 이 조항들에 실려 있는 내용만 사용해 질문에 "
+     "답변해 주세요. 근거 조항 번호와 원문 인용을 포함하고, 검색 결과에 근거가 "
+     "없는 내용은 추정하지 마세요."),
+    ("아래 조항들을 검토하여 질문에 답하시오. 답변에는 근거가 된 문서·조항의 "
+     "지목과 원문 인용이 있어야 하며, 제공된 조항 밖의 지식을 사용해서는 안 된다. "
+     "근거가 없으면 그 사실을 명시하시오."),
+    ("[검색 결과 기반 응답] 검색된 규정 조항의 범위 안에서만 답하십시오. "
+     "근거 조항 지목·원문 인용 필수. 범위 밖이면 '제공된 조항으로는 답할 수 "
+     "없다'로 응답하십시오."),
+    "",  # 무지시 — 컨텍스트 구조만으로 형식 유지 학습(서빙 프롬프트 변형 내성)
+]
+SUITE_INSTR = SUITE_INSTR_VARIANTS[0]  # 하위 호환(외부 참조용)
+
+
+def pick_suite_instr(source_id: str) -> str:
+    """항목별 결정적 지시문 선택 — 변형 5종 각 17% + 무지시 15%."""
+    h = int(hashlib.sha1((source_id + "|instr").encode()).hexdigest(), 16) % 100
+    if h < 15:
+        return SUITE_INSTR_VARIANTS[5]
+    return SUITE_INSTR_VARIANTS[(h - 15) % 5]
 
 
 def build_suite_prompt(row: dict, distractors: list[dict],
@@ -266,7 +293,9 @@ def build_suite_prompt(row: dict, distractors: list[dict],
     golden_texts = {t for _, t in golden}
     positions = [i for i, (sp, c) in enumerate(docs, 1) if c in golden_texts]
     doc_block = "\n\n".join(fmt_doc(i, sp, c) for i, (sp, c) in enumerate(docs, 1))
-    prompt = f"{SUITE_INSTR}\n\n[검색된 규정 조항]\n{doc_block}\n\n[질문]\n{row['question']}"
+    instr = pick_suite_instr(row["question_id"])
+    head = f"{instr}\n\n" if instr else ""
+    prompt = f"{head}[검색된 규정 조항]\n{doc_block}\n\n[질문]\n{row['question']}"
     return prompt, positions
 
 
