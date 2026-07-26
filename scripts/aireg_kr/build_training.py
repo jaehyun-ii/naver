@@ -336,7 +336,12 @@ def suite_rows(pool: list[dict], sft_f, dpo_f, route=None,
                            "publisher": row["metadata"].get("publisher", "KR"),
                            "article_text": ev.get("article_text", ""),
                            "chapter_no": None}
-            n_dis = max(2, 4 - len(row["evidence"]))
+            # 문서 수 변형(v2a ⑥ 선반영): 항목별 결정적 2~5 distractor —
+            # 총 문서 3~6개로 top_k 확대·검색 변동에 대한 분포 내성 확보
+            base_dis = max(2, 4 - len(row["evidence"]))
+            n_dis = base_dis + (int(hashlib.sha1(
+                (row["question_id"] + "|ndoc").encode()).hexdigest(), 16) % 3) - 1
+            n_dis = max(2, min(5, n_dis))
             if rag is not None:
                 # 실검색 hard negative — 모든 evidence 조는 제외(다중 근거 트랙)
                 ev_ids = {nfc(e["chunk_id"]) for e in row["evidence"]}
