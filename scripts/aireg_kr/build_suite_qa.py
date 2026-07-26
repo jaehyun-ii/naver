@@ -851,8 +851,13 @@ def gen_formula_calc(rule: dict, aux: dict | None, feedback: str = "") -> dict |
         flags.append("formula_not_in_source")
     if fv and fv.replace(",", "") not in joined.replace(",", ""):
         flags.append("final_value_missing")
-    if judgment in ("충족", "미충족") and not re.search(r"[<>≤≥]", joined):
-        flags.append("inequality_missing")
+    if judgment in ("충족", "미충족") and not re.search(r"[<>≤≥]", ans):
+        # 부등식은 최종 답변 텍스트에 있어야 학습된다 — steps에만 있으면 승계
+        step_ineq = next((st for st in steps if re.search(r"[<>≤≥]", st)), None)
+        if step_ineq:
+            ans = ans.rstrip() + " (" + step_ineq.strip() + ")"
+        else:
+            flags.append("inequality_missing")
     # 부여 값을 질문에 결정적으로 명시 — 질문만으로 계산 가능해야 하며,
     # 검증자도 '원문에 없는 수치'로 오판하지 않는다.
     if given := (obj.get("given") or {}):
