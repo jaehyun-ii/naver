@@ -232,7 +232,7 @@ services:
     # mineru CLI(etl extra)는 구 이미지에 없어 기동 시 설치(이미지 재빌드 전 임시 심)
     command:
       ["bash", "-c",
-       "python -m pip install -q 'mineru[pipeline]>=3.3.1' 'pdftext>=0.6' pymupdf pypdf 'transformers==5.13.0' && python -m pip uninstall -q -y opencv-python opencv-contrib-python opencv-python-headless >/dev/null 2>&1; python -m pip install -q --force-reinstall --no-deps opencv-python-headless && exec python -m llmops_core.ingest worker"]
+       "python -m pip install -q 'mineru[pipeline]>=3.3.1' 'pdftext>=0.6' pymupdf pypdf && python -m pip uninstall -q -y opencv-python opencv-contrib-python opencv-python-headless >/dev/null 2>&1; python -m pip install -q --force-reinstall --no-deps opencv-python-headless && exec python -m llmops_core.ingest worker"]
     deploy:
       resources:
         reservations:
