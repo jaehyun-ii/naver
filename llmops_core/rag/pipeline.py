@@ -37,6 +37,46 @@ def compose_system(base_system: str | None, context: str | None) -> str | None:
     return f"{base_system}\n\n{block}" if base_system else block
 
 
+_YEAR = __import__("re").compile(r"[\s(_]?(19|20)\d{2}[)\s]?")
+
+
+def _dedup_editions(hits):
+    """동일 조의 연도판 이본 중복 제거 — 연도 제거 정규화 section_path 키로
+    첫(상위 점수) 항목만 유지(실측: top-4에 같은 조 2회씩 들어와 슬롯 낭비)."""
+    import re
+    seen = set()
+    out = []
+    for h in hits:
+        meta = getattr(h.document, "metadata", None) or {}
+        path = str(meta.get("section_path") or h.document.id)
+        key = re.sub(r"\s+", "", _YEAR.sub("", path))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(h)
+    return out
+
+
+NO_HIT_MESSAGE = ("제공된 지식베이스에서 질문과 관련된 규정 조항을 찾지 못했습니다. "
+                  "질문의 용어를 바꾸거나(정식 명칭·조항 번호 포함) 범위를 좁혀 "
+                  "다시 시도해 주세요.")
+
+
+def verify_citations(answer: str, context: str) -> list[str]:
+    """응답의 「발췌」 인용이 컨텍스트에 실존하는지 검사 — 미실존 목록 반환.
+
+    학습·평가와 동일한 공백 정규화 앞 60자 대조(발췌 미실존률 지표의 서빙 이식).
+    """
+    import re
+    ws = lambda s: re.sub(r"\s+", "", s or "")
+    ctx = ws(context)
+    missing = []
+    for q in re.findall(r"「([^」]{15,300})」", answer or ""):
+        if ws(q)[:60] not in ctx:
+            missing.append(q[:80])
+    return missing
+
+
 class RagPipeline:
     """임베더 + 벡터스토어 묶음. 수집/검색/메시지 증강 제공."""
 
@@ -103,9 +143,19 @@ class RagPipeline:
         hits = self.store.search(qv, fetch)
         if self.score_threshold > 0.0:
             hits = [h for h in hits if h.score >= self.score_threshold]
+        if cfg.dedup_editions:
+            hits = _dedup_editions(hits)
         if cfg.reranker_model and len(hits) > kk:
             hits = self._rerank(query, hits)[:kk]
         return hits[:kk]
+
+    def low_confidence(self, hits: list[Hit]) -> bool:
+        """저신뢰 게이트 — top-1 벡터 점수가 문턱 미달이거나 결과 없음.
+
+        Nemotron 분리대역 실측(관련 0.42+ / 준무관 0.33) 기반 문턱 0.38.
+        미달 시 호출측은 모델 생성 없이 '관련 조항 미발견' 응답을 반환한다."""
+        thr = get_settings().rag.low_confidence_threshold
+        return not hits or max(h.score for h in hits) < thr
 
     def _rerank(self, query: str, hits: list[Hit]) -> list[Hit]:
         """cross-encoder 재정렬(lazy 로드). 실패 시 벡터 순서 유지(가용성 우선)."""

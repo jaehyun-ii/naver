@@ -197,10 +197,27 @@ async def chat_completions(
     # 2.5) 서빙 RAG — 검색·컨텍스트 주입(평가 --rag와 동일 경로). control 필드는 제거.
     rag_on = _rag_enabled(req)
     req.extra.pop("rag", None)
+    rag_context = ""
     if rag_on:
         from llmops_core.common.schemas import ChatMessage
+        from llmops_core.rag.pipeline import NO_HIT_MESSAGE
 
-        injected, _hits = get_rag().inject_context([m.model_dump() for m in req.messages])
+        rag = get_rag()
+        injected, _hits = rag.inject_context([m.model_dump() for m in req.messages])
+        # 에이전틱 1단계 — 저신뢰 게이트: 관련 조항 미발견이면 모델 호출 생략.
+        # (환각 모드 진입 자체를 차단 — 강건성 감사 #1·#2)
+        if rag.low_confidence(_hits):
+            return JSONResponse({
+                "id": "rag-nohit", "object": "chat.completion", "model": req.model,
+                "choices": [{"index": 0, "finish_reason": "stop",
+                             "message": {"role": "assistant",
+                                         "content": NO_HIT_MESSAGE}}],
+                "usage": {"prompt_tokens": 0, "completion_tokens": 0,
+                          "total_tokens": 0},
+            })
+        rag_context = rag.build_context(_hits, next(
+            (m.get("content", "") for m in reversed(injected)
+             if m.get("role") == "user"), ""))
         req.messages = [ChatMessage(**m) for m in injected]
 
     # 3-STREAM) stream=true면 SSE로 청크 릴레이(버퍼링 금지). 사용량/비용은 종료 시 집계.
@@ -216,6 +233,23 @@ async def chat_completions(
 
     # 4) 출력 가드레일 (금칙어·PII 마스킹) — 첫 choice 메시지에 적용
     _apply_output_guardrail(raw)
+
+    # 4.5) 에이전틱 1단계 — 실시간 인용 검증(강건성 감사 #15): 응답의 「발췌」가
+    # 제공 컨텍스트에 실존하지 않으면 경고를 부착한다(위조 인용 12.3% 실측 대응).
+    if rag_on and rag_context and get_settings().rag.verify_citations:
+        from llmops_core.rag.pipeline import verify_citations
+
+        try:
+            msg = raw["choices"][0]["message"]
+            missing = verify_citations(msg.get("content") or "", rag_context)
+            if missing:
+                msg["content"] = (msg["content"].rstrip()
+                                  + "\n\n⚠ 인용 검증: 다음 발췌는 제공된 조항 원문에서 "
+                                    "확인되지 않았습니다 — 원문 대조가 필요합니다: "
+                                  + " / ".join(f"「{m}…」" for m in missing[:3]))
+                raw["rag_citation_warnings"] = len(missing)
+        except (KeyError, IndexError):
+            pass
 
     # 5) 비용 반영 (캐시 적중 시 0 — 예산 통제)
     policy.record_spend(ctx, cost)

@@ -113,6 +113,14 @@ class RagSettings(BaseModel):
     # 컨텍스트 전체 문자 예산 — 긴 조(parent) 여러 개가 동시에 걸리는 꼬리 케이스에서
     # 모델 윈도우(vLLM 12k 토큰) 초과를 방지. 리랭크 순서대로 채우고 초과분은 절단.
     context_budget_chars: int = 12000
+    # ── 에이전틱 1단계 게이트(강건성 감사 #1·#2·#4·#15) ──
+    # low_confidence_threshold: top-1 벡터 점수 미달 시 모델 호출 없이 미발견 응답.
+    #   Nemotron 실측 분리대역(관련 0.42+/준무관 0.33) 기준 0.38.
+    low_confidence_threshold: float = 0.38
+    # dedup_editions: 동일 발행처·연도 제거 section_path 기준 이본 중복 제거
+    dedup_editions: bool = True
+    # verify_citations: 응답의 「발췌」를 컨텍스트와 대조해 미실존 시 경고 부착
+    verify_citations: bool = True
     persist_path: str | None = "./rag_store"  # memory 백엔드 디스크 영속(없으면 휘발)
     # 서빙 시점 자동 RAG — 게이트웨이가 요청을 검색·컨텍스트 주입 후 모델 호출.
     # 기본 off(요청별 extra.rag로 override). 켜면 평가(--rag)와 서빙이 동일 경로로 정합.
