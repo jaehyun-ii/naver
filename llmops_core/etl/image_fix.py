@@ -37,6 +37,16 @@ def _caption_of(block: dict) -> str:
 _MERMAID = re.compile(r"```\s*mermaid|graph\s+(TD|LR|RL|BT)\b|flowchart\s+(TD|LR)")
 
 
+def _is_degenerate(text: str) -> bool:
+    """VLM 반복 열화 출력 검출 — 최빈 8어절 n-gram 점유율 30% 초과(실측 433건)."""
+    toks = (text or "").split()
+    if len(toks) < 24:
+        return False
+    from collections import Counter
+    grams = Counter(tuple(toks[i:i + 8]) for i in range(len(toks) - 8))
+    return grams.most_common(1)[0][1] * 8 / len(toks) > 0.3
+
+
 def _is_confabulated(text: str) -> bool:
     """VLM이 도면과 무관한 mermaid 그래프를 창작한 출력(실측 68건) 감지."""
     t = text or ""
@@ -249,7 +259,8 @@ def reanalyze_images(pdf_path: Path, content_list: list[dict], *,
     weak = [b for b in content_list
             if b.get("type") == "image"
             and (_desc_len(b) < _MIN_DESC
-                 or _is_confabulated(str(b.get("content") or "")))]
+                 or _is_confabulated(str(b.get("content") or ""))
+                 or _is_degenerate(str(b.get("content") or "")))]
     stats = {"images": sum(1 for b in content_list if b.get("type") == "image"),
              "caption_cleaned": n_clean, "caption_bound": bind, "noise_dropped": n_noise, "merged": n_merged, "weak": len(weak), "fixed": 0, "failed": 0}
     if not weak:
@@ -278,8 +289,8 @@ def reanalyze_images(pdf_path: Path, content_list: list[dict], *,
         except Exception:  # noqa: BLE001 — 블록 단위 실패는 마크 후 계속
             desc = ""
         cap = _caption_of(b)
-        if _is_confabulated(desc):
-            desc = ""  # 재분석도 허구 그래프면 폐기
+        if _is_confabulated(desc) or _is_degenerate(desc):
+            desc = ""  # 재분석도 허구 그래프·반복 열화면 폐기
         if len(desc.replace(cap, "").strip()) >= _MIN_DESC:
             b["content"] = f"{cap}\n{desc}".strip() if cap else desc
             stats["fixed"] += 1
