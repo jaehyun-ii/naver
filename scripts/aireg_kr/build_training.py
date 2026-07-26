@@ -238,18 +238,19 @@ APPLIC_KO = {"applicable": "적용", "not_applicable": "미적용", "conditional
 SUITE_TASK_TYPE = {"spec": "direct_qa", "applic": "applicability",
                    "xref": "cross_reference_lookup", "compare": "comparison",
                    "def_link": "cross_reference_lookup", "precedence": "direct_qa",
-                   "unit_convert": "requirement_satisfaction",
+                   "formula_calc": "requirement_satisfaction",
+                   "figure_qa": "extractive_qa",
                    "table_lookup": "extractive_qa", "hierarchy": "applicability"}
 # 스위트 소스 파일 → 내부 태스크 키 (build_suite_qa.TRACK_FILES와 정합)
 SUITE_SOURCES = [
     ("spec_qa.jsonl", "spec"), ("applicability_qa.jsonl", "applic"),
     ("crossref_qa.jsonl", "xref"), ("compare_qa.jsonl", "compare"),
     ("def_link_qa.jsonl", "def_link"), ("precedence_qa.jsonl", "precedence"),
-    ("unit_convert_qa.jsonl", "unit_convert"),
+    ("formula_calc_qa.jsonl", "formula_calc"), ("figure_qa.jsonl", "figure_qa"),
     ("table_lookup_qa.jsonl", "table_lookup"), ("hierarchy_qa.jsonl", "hierarchy"),
 ]
 # 판정형 트랙의 decision 한국어 — chosen/rejected 라벨 표기
-JUDGE_DECISION_KO = {"unit_convert": JUDGMENT_KO, "hierarchy": APPLIC_KO}
+JUDGE_DECISION_KO = {"formula_calc": JUDGMENT_KO, "hierarchy": APPLIC_KO}
 
 SUITE_INSTR = ("당신은 선급 규정 전문가입니다. 아래 검색된 규정 조항들을 근거로 질문에 답하십시오.\n"
                "반드시 근거 조항을 지목하고 원문을 인용하십시오. 제공된 조항으로 답할 수 없으면 "
@@ -323,10 +324,14 @@ def suite_rows(pool: list[dict], sft_f, dpo_f, route=None,
             prompt, positions = build_suite_prompt(row, distractors, rng)
             cite = ", ".join(f"[문서 {p}]" for p in positions)
             paths = " / ".join(e["section_path"] for e in row["evidence"])
-            if task in ("spec", "table_lookup"):
+            if task == "formula_calc" and not row.get("expected_judgment"):
+                # 판정 없는 순수 계산 문제 — 서술형(근거+인용+답변) 조립
                 chosen = (f"근거 조항: {cite} {paths}\n"
                           f"인용: 「{ev.get('quote', '')}」\n답변: {row['gold_answer']}")
-            elif task in ("applic", "hierarchy", "unit_convert"):
+            elif task in ("spec", "table_lookup", "figure_qa"):
+                chosen = (f"근거 조항: {cite} {paths}\n"
+                          f"인용: 「{ev.get('quote', '')}」\n답변: {row['gold_answer']}")
+            elif task in ("applic", "hierarchy", "formula_calc"):
                 # 판정형 → 공통 규정 답변 형식(select_answer_format 라우팅과 일치)
                 ko = JUDGE_DECISION_KO.get(task, APPLIC_KO)
                 chosen = format_regulation_answer(
@@ -343,10 +348,10 @@ def suite_rows(pool: list[dict], sft_f, dpo_f, route=None,
                 "source": f"aireg_kr_{task}:{row['question_id']}",
             }, ensure_ascii=False) + "\n")
             n_sft += 1
-            if task in ("applic", "hierarchy", "unit_convert"):
+            if task in ("applic", "hierarchy", "formula_calc") and row.get("expected_judgment"):
                 # 라벨이 gold이므로 반대 판정은 구성상 오답 — 무근거 단정형 rejected.
                 # chosen과 같은 formatter를 써서 형식이 아닌 내용으로 선호를 학습.
-                # (unit_convert 라벨은 프로그램 계산이라 flip의 오답성이 보장된다)
+                # (formula_calc 라벨은 산술 검증을 거쳐 flip의 오답성이 보장된다)
                 ko = JUDGE_DECISION_KO.get(task, APPLIC_KO)
                 wrong = [k for k in ko if k != row["expected_judgment"]]
                 flipped = ko[rng.choice(wrong)]
